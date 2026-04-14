@@ -1,6 +1,27 @@
 <?php
-$logs = get_logs('activity_logger','user_id',$this->session->userdata('user_id'));
-$settings = get_by_id('settings','settings_id','1');
+$logs = isset($logs) ? $logs : get_logs('activity_logger','user_id',$this->session->userdata('user_id'));
+$settings = isset($settings) ? $settings : get_by_id('settings','settings_id','1');
+$summary_stats = isset($summary_stats) && is_array($summary_stats) ? $summary_stats : array();
+$product_balances = isset($product_balances) && is_array($product_balances) ? $product_balances : array();
+$currency = isset($settings->currency) ? $settings->currency : '';
+
+$paid_interest = isset($summary_stats['paid_interest']) ? (float) $summary_stats['paid_interest'] : 0;
+$paid_lc = isset($summary_stats['paid_lc']) ? (float) $summary_stats['paid_lc'] : 0;
+$paid_af = isset($summary_stats['paid_af']) ? (float) $summary_stats['paid_af'] : 0;
+$outstanding_interest = isset($summary_stats['outstanding_interest']) ? (float) $summary_stats['outstanding_interest'] : 0;
+$outstanding_lc = isset($summary_stats['outstanding_lc']) ? (float) $summary_stats['outstanding_lc'] : 0;
+$outstanding_af = isset($summary_stats['outstanding_af']) ? (float) $summary_stats['outstanding_af'] : 0;
+$total_unpaid = isset($summary_stats['total_unpaid']) ? (float) $summary_stats['total_unpaid'] : 0;
+$total_arrears = isset($summary_stats['total_arrears']) ? (float) $summary_stats['total_arrears'] : 0;
+$one_day_arrears = isset($summary_stats['one_day_arrears']) ? (float) $summary_stats['one_day_arrears'] : 0;
+$three_day_arrears = isset($summary_stats['three_day_arrears']) ? (float) $summary_stats['three_day_arrears'] : 0;
+$week_arrears = isset($summary_stats['week_arrears']) ? (float) $summary_stats['week_arrears'] : 0;
+$month_arrears = isset($summary_stats['month_arrears']) ? (float) $summary_stats['month_arrears'] : 0;
+$two_month_arrears = isset($summary_stats['two_month_arrears']) ? (float) $summary_stats['two_month_arrears'] : 0;
+$three_month_arrears = isset($summary_stats['three_month_arrears']) ? (float) $summary_stats['three_month_arrears'] : 0;
+$payments_today_total = isset($summary_stats['payments_today']) ? (float) $summary_stats['payments_today'] : 0;
+$payments_week_total = isset($summary_stats['payments_week']) ? (float) $summary_stats['payments_week'] : 0;
+$payments_month_total = isset($summary_stats['payments_month']) ? (float) $summary_stats['payments_month'] : 0;
 ?>
 <div class="main-content">
     <div class="page-header no-gutters has-tab" style="margin-bottom: 2px !important;">
@@ -35,15 +56,7 @@ $settings = get_by_id('settings','settings_id','1');
                     </div>
                     <div class="details">
                         <div class="number">
-                        <span><?php echo $settings->currency?> <?php
-                            $ip_i = 0;
-
-                            $ip = institutional_portfolio();
-                            $paid_interest_balances = paid_interest_balances();
-
-                            echo number_format(round($paid_interest_balances->totals),2);
-
-                            ?></span>
+                        <span><?php echo $currency ?> <?php echo number_format(round($paid_interest),2); ?></span>
                         </div>
                         <div class="desc">Total Paid/collected Interests on all Loans</div>
                     </div>
@@ -56,13 +69,7 @@ $settings = get_by_id('settings','settings_id','1');
                     </div>
                     <div class="details">
                         <div class="number">
-                        <span><?php echo $settings->currency; ?> <?php
-
-
-                            $paid_lc_balances = paid_lc_balances();
-
-                            echo number_format(round($paid_lc_balances->totals),2);
-                            ?></span>
+                        <span><?php echo $currency ?> <?php echo number_format(round($paid_lc),2); ?></span>
                         </div>
                         <div class="desc">Total paid/collected loan cover  on all Loans</div>
                     </div>
@@ -75,11 +82,7 @@ $settings = get_by_id('settings','settings_id','1');
                     </div>
                     <div class="details">
                         <div class="number">
-                        <span><?php echo $settings->currency?> <?php
-                            $paid_af_balances = paid_af_balances();
-
-                            echo number_format(round($paid_af_balances->totals),2);
-                            ?></span>
+                        <span><?php echo $currency ?> <?php echo number_format(round($paid_af),2); ?></span>
                         </div>
                         <div class="desc">Total paid/collected loan administration fees on all Loans <br/></div>
 
@@ -105,15 +108,7 @@ $settings = get_by_id('settings','settings_id','1');
                     </div>
                     <div class="details">
                         <div class="number">
-                        <span><?php echo $settings->currency?> <?php
-                            $ip_i = 0;
-
-                            $ip = institutional_portfolio();
-                            $outstanding_interest_balance = outstanding_interest_balances();
-
-                            echo number_format(round($outstanding_interest_balance->totals),2);
-
-                            ?></span>
+                        <span><?php echo $currency ?> <?php echo number_format(round($outstanding_interest),2); ?></span>
                         </div>
                         <div class="desc">Total outstanding Interests on all Loans</div>
                     </div>
@@ -126,13 +121,7 @@ $settings = get_by_id('settings','settings_id','1');
                     </div>
                     <div class="details">
                         <div class="number">
-                        <span><?php echo $settings->currency?> <?php
-
-
-                            $outstanding_lc_balance = outstanding_lc_balances();
-
-                            echo number_format(round($outstanding_lc_balance->totals),2);
-                            ?></span>
+                        <span><?php echo $currency ?> <?php echo number_format(round($outstanding_lc),2); ?></span>
                         </div>
                         <div class="desc">Total outstanding loan cover balances on all Loans</div>
                     </div>
@@ -145,13 +134,7 @@ $settings = get_by_id('settings','settings_id','1');
                     </div>
                     <div class="details">
                         <div class="number">
-                        <span><?php echo $settings->currency?> <?php
-                            $ip_ac = 0;
-
-                            $outstanding_af_balances = outstanding_af_balances();
-
-                            echo number_format(round($outstanding_af_balances->totals),2);
-                            ?></span>
+                        <span><?php echo $currency ?> <?php echo number_format(round($outstanding_af),2); ?></span>
                         </div>
                         <div class="desc">Total outstanding loan administration balance on all Loans</div>
                     </div>
@@ -175,22 +158,14 @@ $settings = get_by_id('settings','settings_id','1');
                     </div>
                     <div class="details">
                         <div class="number">
-                        <span><?php echo $settings->currency?> <?php
-
-                            $totalunpaid=get_all_total_unpayments();
-                            echo "MK" .number_format($totalunpaid->total_unpaid,2);
-
-                            ?></span>
+                        <span><?php echo $currency ?> <?php echo number_format(round($total_unpaid),2); ?></span>
                         </div>
                         <div class="desc">Total Institutional Portfolio-outstanding balances</div>
                     </div>
                 </a>
             </div>
             <?php
-            $products = get_all('loan_products');
-            foreach ($products as $product){
-//            $product->loan_product_id
-                $get_all_balances = get_all_loan_balances_by_product($product->loan_product_id);
+            foreach ($product_balances as $product){
                 ?>
                 <div class="col-lg-4 col-md-4 col-sm-6 col-xs-12">
                     <a class="dashboard-stat blue" href="<?php echo base_url('Loan/balances?product=').$product->loan_product_id; ?>">
@@ -199,15 +174,7 @@ $settings = get_by_id('settings','settings_id','1');
                         </div>
                         <div class="details">
                             <div class="number">
-                        <span><?php echo $settings->currency ?><?php
-                            $b = 0;
-                            foreach ($get_all_balances as $d){
-                                $b += $d->principal;
-                            }
-                            $round = round($b);
-                            echo number_format($round,2);
-
-                            ?></span>
+                        <span><?php echo $currency ?> <?php echo number_format(round((float) $product->outstanding_principal),2); ?></span>
                             </div>
                             <div class="desc"><?php echo $product->product_name. " (".$product->product_code.")"; ?></div>
                         </div>
@@ -236,15 +203,7 @@ $settings = get_by_id('settings','settings_id','1');
                             </div>
                             <div class="details">
                                 <div class="numberr">
-                        <span><?php echo $settings->currency?> <?php
-                            $ip_a = 0;
-
-                            $arrea = institutional_arrears();
-                            foreach ($arrea as $a){
-                                $ip_a += $a->amount;
-                            }
-                            echo number_format(round($ip_a),2);
-                            ?></span>
+                        <span><?php echo $currency ?> <?php echo number_format(round($total_arrears),2); ?></span>
                                 </div>
                                 <div class="desc">Total Arrears</div>
                             </div>
@@ -257,16 +216,7 @@ $settings = get_by_id('settings','settings_id','1');
                             </div>
                             <div class="details">
                                 <div class="numberr">
-                        <span><?php echo $settings->currency?> <?php
-                            $today_b = 0;
-                            $today = institutional_arrears_today();
-
-                            foreach ($today as $td){
-                                $today_b += $td->amount;
-                            }
-
-                            echo number_format(round($today_b),2);
-                            ?></span>
+                        <span><?php echo $currency ?> <?php echo number_format(round($one_day_arrears),2); ?></span>
                                 </div>
                                 <div class="desc">One day arrears</div>
                             </div>
@@ -279,15 +229,7 @@ $settings = get_by_id('settings','settings_id','1');
                             </div>
                             <div class="details">
                                 <div class="numberr">
-                        <span><?php echo $settings->currency?> <?php
-                            $three_d = 0;
-                            $threed = institutional_arrears_threedays();
-
-                            foreach ($threed as $d3){
-                                $three_d += $d3->amount;
-                            }
-                            echo number_format(round($three_d),2);
-                            ?></span>
+                        <span><?php echo $currency ?> <?php echo number_format(round($three_day_arrears),2); ?></span>
                                 </div>
                                 <div class="desc">Three days Arrears</div>
                             </div>
@@ -300,18 +242,7 @@ $settings = get_by_id('settings','settings_id','1');
                             </div>
                             <div class="details">
                                 <div class="numberr">
-                        <span><?php echo $settings->currency?> <?php
-                            $week_d = 0;
-
-
-                            $week = institutional_arrears_week();
-                            foreach ($week as $w){
-                                $week_d += $w->amount;
-
-                            }
-
-                            echo number_format(round($week_d),2);
-                            ?></span>
+                        <span><?php echo $currency ?> <?php echo number_format(round($week_arrears),2); ?></span>
                                 </div>
                                 <div class="desc">One week Arrears</div>
                             </div>
@@ -324,17 +255,7 @@ $settings = get_by_id('settings','settings_id','1');
                             </div>
                             <div class="details">
                                 <div class="numberr">
-                        <span><?php echo $settings->currency?> <?php
-                            $month_d = 0;
-
-                            $mo = institutional_arrears_month();
-                            foreach ($mo as $m){
-                                $month_d += $m->amount;
-
-                            }
-
-                            echo number_format(round($month_d),2);
-                            ?></span>
+                        <span><?php echo $currency ?> <?php echo number_format(round($month_arrears),2); ?></span>
                                 </div>
                                 <div class="desc">One Month Arrears</div>
                             </div>
@@ -347,15 +268,7 @@ $settings = get_by_id('settings','settings_id','1');
                             </div>
                             <div class="details">
                                 <div class="numberr">
-                        <span><?php echo $settings->currency?> <?php
-                            $one_m = 0;
-
-                            $onem = institutional_arrears_2month();
-                            foreach ($onem as $m1){
-                                $one_m += $m1->amount;
-                            }
-                            echo number_format(round($one_m),2);
-                            ?></span>
+                        <span><?php echo $currency ?> <?php echo number_format(round($two_month_arrears),2); ?></span>
                                 </div>
                                 <div class="desc">Two Months Arrears</div>
                             </div>
@@ -368,15 +281,7 @@ $settings = get_by_id('settings','settings_id','1');
                             </div>
                             <div class="details">
                                 <div class="numberr">
-                        <span><?php echo $settings->currency?> <?php
-                            $two_m = 0;
-
-                            $twom = institutional_arrears_3month();
-                            foreach ($twom as $m2){
-                                $two_m += $m2->amount;
-                            }
-                            echo number_format(round($two_m),2);
-                            ?></span>
+                        <span><?php echo $currency ?> <?php echo number_format(round($three_month_arrears),2); ?></span>
                                 </div>
                                 <div class="desc">Three Months Arrears</div>
                             </div>
@@ -395,16 +300,7 @@ $settings = get_by_id('settings','settings_id','1');
                             </div>
                             <div class="details">
                                 <div class="numberr">
-                        <span><?php echo $settings->currency?> <?php
-                            $payment_d = 0;
-                            $payment_today = payments_today();
-
-                            foreach ($payment_today as $pd){
-                                $payment_d += $pd->amount;
-                            }
-
-                            echo number_format(round($payment_d),2);
-                            ?></span>
+                        <span><?php echo $currency ?> <?php echo number_format(round($payments_today_total),2); ?></span>
                                 </div>
                                 <div class="desc">Payments due today</div>
                             </div>
@@ -417,15 +313,7 @@ $settings = get_by_id('settings','settings_id','1');
                             </div>
                             <div class="details">
                                 <div class="numberr">
-                        <span><?php echo $settings->currency?> <?php
-                            $payment_week = 0;
-                            $pw = payments_week();
-
-                            foreach ($pw as $pww){
-                                $payment_week += $pww->amount;
-                            }
-                            echo number_format(round($payment_week),2);
-                            ?></span>
+                        <span><?php echo $currency ?> <?php echo number_format(round($payments_week_total),2); ?></span>
                                 </div>
                                 <div class="desc">Payment due this week</div>
                             </div>
@@ -438,18 +326,7 @@ $settings = get_by_id('settings','settings_id','1');
                             </div>
                             <div class="details">
                                 <div class="numberr">
-                        <span><?php echo $settings->currency?> <?php
-                            $p_m = 0;
-
-
-                            $payment_month = payments_month();
-                            foreach ($payment_month as $pmm){
-                                $p_m += $pmm->amount;
-
-                            }
-
-                            echo number_format(round($p_m),2);
-                            ?></span>
+                        <span><?php echo $currency ?> <?php echo number_format(round($payments_month_total),2); ?></span>
                                 </div>
                                 <div class="desc">Payment due this month</div>
                             </div>

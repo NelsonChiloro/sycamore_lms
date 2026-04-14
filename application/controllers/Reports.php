@@ -53,11 +53,135 @@ public function caparfilter(){
 	$this->load->view('admin/footer');
 }
 public function summary(){
-
+	$data = array(
+		'logs' => get_logs('activity_logger','user_id',$this->session->userdata('user_id')),
+		'settings' => get_by_id('settings','settings_id','1'),
+		'summary_stats' => $this->get_summary_metrics(),
+		'product_balances' => $this->get_summary_product_balances(),
+	);
 
 	$this->load->view('admin/header');
-	$this->load->view('reports/summary');
+	$this->load->view('reports/summary', $data);
 	$this->load->view('admin/footer');
+}
+
+private function get_summary_metrics()
+{
+	date_default_timezone_set('Africa/Blantyre');
+
+	$stats = array(
+		'paid_interest' => 0,
+		'paid_lc' => 0,
+		'paid_af' => 0,
+		'outstanding_interest' => 0,
+		'outstanding_lc' => 0,
+		'outstanding_af' => 0,
+		'total_unpaid' => 0,
+		'total_arrears' => 0,
+		'one_day_arrears' => 0,
+		'three_day_arrears' => 0,
+		'week_arrears' => 0,
+		'month_arrears' => 0,
+		'two_month_arrears' => 0,
+		'three_month_arrears' => 0,
+		'payments_today' => 0,
+		'payments_week' => 0,
+		'payments_month' => 0,
+	);
+
+	$overviewSql = "SELECT
+			SUM(CASE WHEN ps.status = 'PAID' THEN COALESCE(ps.interest, 0) ELSE 0 END) AS paid_interest,
+			SUM(CASE WHEN ps.status = 'PAID' THEN COALESCE(ps.ploan_cover, 0) ELSE 0 END) AS paid_lc,
+			SUM(CASE WHEN ps.status = 'PAID' THEN COALESCE(ps.padmin_fee, 0) ELSE 0 END) AS paid_af,
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' THEN COALESCE(ps.interest, 0) ELSE 0 END) AS outstanding_interest,
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' THEN COALESCE(ps.ploan_cover, 0) ELSE 0 END) AS outstanding_lc,
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' THEN COALESCE(ps.padmin_fee, 0) ELSE 0 END) AS outstanding_af,
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS total_unpaid
+		FROM payement_schedules ps
+		JOIN loan l ON l.loan_id = ps.loan_id";
+
+	$overview = $this->run_summary_query($overviewSql);
+	if ($overview) {
+		$stats['paid_interest'] = (float) $overview->paid_interest;
+		$stats['paid_lc'] = (float) $overview->paid_lc;
+		$stats['paid_af'] = (float) $overview->paid_af;
+		$stats['outstanding_interest'] = (float) $overview->outstanding_interest;
+		$stats['outstanding_lc'] = (float) $overview->outstanding_lc;
+		$stats['outstanding_af'] = (float) $overview->outstanding_af;
+		$stats['total_unpaid'] = (float) $overview->total_unpaid;
+	}
+
+	$today = date('Y-m-d');
+	$tomorrow = date('Y-m-d', strtotime('+1 day'));
+	$weekStart = date('Y-m-d', strtotime('last Sunday'));
+	$weekEndExclusive = date('Y-m-d', strtotime('next Sunday +1 day'));
+	$monthStart = date('Y-m-01');
+	$nextMonthStart = date('Y-m-01', strtotime('first day of next month'));
+
+	$timingSql = "SELECT
+			SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS total_arrears,
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) ELSE 0 END) AS one_day_arrears,
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 3 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) ELSE 0 END) AS three_day_arrears,
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) ELSE 0 END) AS week_arrears,
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) ELSE 0 END) AS month_arrears,
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 60 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) ELSE 0 END) AS two_month_arrears,
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) ELSE 0 END) AS three_month_arrears,
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= ? AND ps.payment_schedule < ? THEN COALESCE(ps.amount, 0) ELSE 0 END) AS payments_today,
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= ? AND ps.payment_schedule < ? THEN COALESCE(ps.amount, 0) ELSE 0 END) AS payments_week,
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= ? AND ps.payment_schedule < ? THEN COALESCE(ps.amount, 0) ELSE 0 END) AS payments_month
+		FROM payement_schedules ps
+		JOIN loan l ON l.loan_id = ps.loan_id";
+
+	$timing = $this->run_summary_query($timingSql, array(
+		$today,
+		$tomorrow,
+		$weekStart,
+		$weekEndExclusive,
+		$monthStart,
+		$nextMonthStart,
+	));
+
+	if ($timing) {
+		$stats['total_arrears'] = (float) $timing->total_arrears;
+		$stats['one_day_arrears'] = (float) $timing->one_day_arrears;
+		$stats['three_day_arrears'] = (float) $timing->three_day_arrears;
+		$stats['week_arrears'] = (float) $timing->week_arrears;
+		$stats['month_arrears'] = (float) $timing->month_arrears;
+		$stats['two_month_arrears'] = (float) $timing->two_month_arrears;
+		$stats['three_month_arrears'] = (float) $timing->three_month_arrears;
+		$stats['payments_today'] = (float) $timing->payments_today;
+		$stats['payments_week'] = (float) $timing->payments_week;
+		$stats['payments_month'] = (float) $timing->payments_month;
+	}
+
+	return $stats;
+}
+
+private function get_summary_product_balances()
+{
+	$sql = "SELECT
+			lp.loan_product_id,
+			lp.product_name,
+			lp.product_code,
+			COALESCE(SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' THEN COALESCE(ps.principal, 0) ELSE 0 END), 0) AS outstanding_principal
+		FROM loan_products lp
+		LEFT JOIN loan l ON l.loan_product = lp.loan_product_id
+		LEFT JOIN payement_schedules ps ON ps.loan_id = l.loan_id
+		GROUP BY lp.loan_product_id, lp.product_name, lp.product_code
+		ORDER BY lp.product_name ASC";
+
+	$query = $this->run_summary_query($sql, array(), true);
+	return $query ? $query : array();
+}
+
+private function run_summary_query($sql, $binds = array(), $multiple = false)
+{
+	$query = function_exists('safe_db_query') ? safe_db_query($sql, $binds) : $this->db->query($sql, $binds);
+	if (!$query) {
+		return $multiple ? array() : null;
+	}
+
+	return $multiple ? $query->result() : $query->row();
 }
     function crb()
 

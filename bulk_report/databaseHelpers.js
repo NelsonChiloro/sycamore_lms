@@ -13,6 +13,8 @@ const pool = mysql.createPool({
     keepAliveInitialDelay: 10000
 });
 
+const promisePool = pool.promise();
+
 // Helper function to execute queries
 const query = (sql, params) => {
     return new Promise((resolve, reject) => {
@@ -22,6 +24,8 @@ const query = (sql, params) => {
         });
     });
 };
+
+const getConnection = () => promisePool.getConnection();
 
 // Function to get amount of arrears
 const getAmountOfArrears = async (loanID) => {
@@ -363,6 +367,7 @@ const sumTotalPar = async () => {
 // Export all functions
 module.exports = {
     query, // Export the query function for other files to use
+    getConnection,
     getAmountOfArrears,
     getAmountOfArrearsPaid,
     getNumberOfArrears,

@@ -1,9 +1,10 @@
 const express = require('express');
 const util = require('util')
-const { query } = require('./databaseHelpers');
+const { query, getConnection } = require('./databaseHelpers');
 const moment = require('moment');
 const fs = require('fs');
 const path= require('path');
+const { processBatchLoanDateUpdate } = require('./loanDateBatchEditor');
 const { generateLoanPortfolioReport } = require('./loanPortfolioReport');
 const { generateLoanPortfolioWriteOffReport } = require('./loanPortfolioWriteOffReport');
 const { generateLoanCollectionsReport } = require('./loanCollectionReport');
@@ -82,10 +83,30 @@ const db = {
 let reportTrackers  = {}; // Store the percentage for reports
 let hasNewData = false; // Flag to track if new data is available
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.get('/', async (req, res) => {
 	// Acknowledge the request with a "processing" response
 	res.status(202).json({message: 'Welcome something is working.'});
 })
+
+app.get('/loan-date-batch-editor', async (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'input.html'));
+});
+
+app.post('/loan-date-batch-update', async (req, res) => {
+    try {
+        const summary = await processBatchLoanDateUpdate(getConnection, req.body || {});
+        res.status(summary.failed > 0 ? 207 : 200).json({
+            message: 'Batch loan date update completed.',
+            ...summary,
+        });
+    } catch (error) {
+        console.error('Batch loan date update failed:', error);
+        res.status(400).json({
+            message: error.message || 'Batch loan date update failed.',
+        });
+    }
+});
 const updatePercentageToDB = (reportId) => {
     const tracker = reportTrackers[reportId];
     if (tracker) {

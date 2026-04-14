@@ -219,11 +219,11 @@ $next_payment_details = $this->Payement_schedules_model->get_next($next_payment_
                                     <?php
 
                                     $oved = '';
-                                    if($next_payment_details->payment_schedule < date('Y-m-d')   AND $next_payment_details->status == 'NOT PAID') {
+                                    if($next_payment_details->payment_schedule < date('Y-m-d') AND in_array($next_payment_details->status, array('NOT PAID', 'PARTIAL PAID'))) {
                                         $oved = ' | OVER DUE';
                                     } elseif($next_payment_details->status=='PAID') {
 
-                                    } elseif($next_payment_details->payment_schedule == date('Y-m-d')  AND $next_payment_details->status == 'NOT PAID') {
+                                    } elseif($next_payment_details->payment_schedule == date('Y-m-d') AND in_array($next_payment_details->status, array('NOT PAID', 'PARTIAL PAID'))) {
 
                                         $oved = ' | DUE TODAY';
                                     }
@@ -269,12 +269,12 @@ $next_payment_details = $this->Payement_schedules_model->get_next($next_payment_
                             //change color depending on it's status
                             $css = '';
                             $xstatus = '';
-                            if($p->payment_schedule < date('Y-m-d')   AND $p->status == 'NOT PAID') {
+                            if($p->payment_schedule < date('Y-m-d') AND in_array($p->status, array('NOT PAID', 'PARTIAL PAID'))) {
                                 $css = ' class="due"';
                                 $xstatus = ' | OVER DUE';
                             } elseif($p->status=='PAID') {
                                 $css = 'class="paid"';
-                            } elseif($p->payment_schedule == date('Y-m-d')  AND $p->status == 'NOT PAID') {
+                            } elseif($p->payment_schedule == date('Y-m-d') AND in_array($p->status, array('NOT PAID', 'PARTIAL PAID'))) {
                                 $css = ' class="due_now"';
                                 $xstatus = ' | DUE TODAY';
                             }
@@ -485,12 +485,12 @@ $next_payment_details = $this->Payement_schedules_model->get_next($next_payment_
                             //change color depending on it's status
                             $css = '';
                             $xstatus = '';
-                            if($p->payment_schedule < date('Y-m-d')   AND $p->status == 'NOT PAID') {
+                            if($p->payment_schedule < date('Y-m-d') AND in_array($p->status, array('NOT PAID', 'PARTIAL PAID'))) {
                                 $css = ' class="due"';
                                 $xstatus = ' | OVER DUE';
                             } elseif($p->status=='PAID') {
                                 $css = 'class="paid"';
-                            } elseif($p->payment_schedule == date('Y-m-d')  AND $p->status == 'NOT PAID') {
+                            } elseif($p->payment_schedule == date('Y-m-d') AND in_array($p->status, array('NOT PAID', 'PARTIAL PAID'))) {
                                 $css = ' class="due_now"';
                                 $xstatus = ' | DUE TODAY';
                             }

@@ -295,7 +295,7 @@ $countryd = $this->Geo_countries_model->get_all();
 				<div class="row">
 					<div class="col-lg-12">
 						<input type="hidden" name="id" value="<?php echo $id; ?>" />
-						<button type="submit" class="btn btn-primary"><?php echo $button ?></button>
+						<button type="submit" class="btn btn-primary" onclick="this.disabled=true;this.form.submit();"><?php echo $button ?></button>
 					</div>
 
 				</div>
