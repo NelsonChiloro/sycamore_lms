@@ -62,10 +62,79 @@ class Payement_schedules_model extends CI_Model
     }
 
     /**
+     * Ensure installment allocation is strictly sequential so only one schedule can be PARTIAL PAID.
+     */
+    private function normalize_schedule_payment_allocation($loan_number)
+    {
+        $loan_number = (int)$loan_number;
+        if ($loan_number <= 0) {
+            return;
+        }
+
+        $schedules = $this->db->select('id, payment_number, amount, paid_amount, status, partial_paid, paid_date')
+            ->from($this->table)
+            ->where('loan_id', $loan_number)
+            ->order_by('payment_number', 'ASC')
+            ->get()
+            ->result();
+
+        if (empty($schedules)) {
+            return;
+        }
+
+        $total_paid = 0.0;
+        $last_payment_number = 0;
+        foreach ($schedules as $schedule) {
+            $total_paid += max(0.0, (float)$schedule->paid_amount);
+            $last_payment_number = (int)$schedule->payment_number;
+        }
+
+        $remaining_paid = $total_paid;
+        $first_incomplete = null;
+
+        foreach ($schedules as $schedule) {
+            $schedule_amount = (float)$schedule->amount;
+            $allocated = min($remaining_paid, $schedule_amount);
+            $remaining_paid -= $allocated;
+
+            $is_fully_paid = ($allocated + 0.0001) >= $schedule_amount;
+            $is_partial = ($allocated > 0.0) && !$is_fully_paid;
+
+            $new_status = $is_fully_paid ? 'PAID' : ($is_partial ? 'PARTIAL PAID' : 'NOT PAID');
+            $new_partial_paid = $is_partial ? 'YES' : 'NO';
+            $new_paid_date = $allocated > 0.0 ? $schedule->paid_date : null;
+
+            if (
+                abs(((float)$schedule->paid_amount) - $allocated) > 0.0001 ||
+                (string)$schedule->status !== $new_status ||
+                (string)$schedule->partial_paid !== $new_partial_paid ||
+                (string)$schedule->paid_date !== (string)$new_paid_date
+            ) {
+                $this->db->where('id', (int)$schedule->id)->update($this->table, array(
+                    'paid_amount' => $allocated,
+                    'status' => $new_status,
+                    'partial_paid' => $new_partial_paid,
+                    'paid_date' => $new_paid_date
+                ));
+            }
+
+            if ($first_incomplete === null && !$is_fully_paid) {
+                $first_incomplete = (int)$schedule->payment_number;
+            }
+        }
+
+        $next_payment_id = ($first_incomplete !== null) ? $first_incomplete : ($last_payment_number + 1);
+        $this->db->where('loan_id', $loan_number)->update('loan', array('next_payment_id' => $next_payment_id));
+    }
+
+    /**
      * Pay loan with late charges allocation priority
      * Payment sequence: Late charges -> Loan cover -> Admin fees -> Interest -> Principal
      */
     public function pay_loan_with_late_charges($loan_number, $pay_number, $amount, $date, $tid) {
+        // Keep allocations sequential before applying payment.
+        $this->normalize_schedule_payment_allocation($loan_number);
+
         // Get payment schedule details
         $this->db->select("*")->from($this->table);
         $this->db->where('loan_id', $loan_number);
@@ -150,6 +219,8 @@ class Payement_schedules_model extends CI_Model
         );
         $this->insert_transaction_compat($transaction);
 
+        $this->normalize_schedule_payment_allocation($loan_number);
+
         return [
             'success' => true,
             'amount_allocated' => $total_payment,
@@ -172,10 +243,24 @@ class Payement_schedules_model extends CI_Model
             return false;
         }
 
+        // Repair any historical out-of-order partial allocations first.
+        $this->normalize_schedule_payment_allocation($loan_number);
+
+        // Always start from the earliest incomplete schedule (NOT PAID or PARTIAL PAID).
+        // If there is a PARTIAL PAID schedule with a lower number than $pay_number, start there.
+        $earliest_row = $this->db->select('MIN(payment_number) as min_pn')
+            ->from($this->table)
+            ->where('loan_id', $loan_number)
+            ->where_in('status', array('NOT PAID', 'PARTIAL PAID'))
+            ->get()->row();
+        $effective_start = !empty($earliest_row) && $earliest_row->min_pn !== null
+            ? min((int)$pay_number, (int)$earliest_row->min_pn)
+            : $pay_number;
+
         $schedules = $this->db->select('*')
             ->from($this->table)
             ->where('loan_id', $loan_number)
-            ->where('payment_number >=', $pay_number)
+            ->where('payment_number >=', $effective_start)
             ->where_in('status', array('NOT PAID', 'PARTIAL PAID'))
             ->order_by('payment_number', 'ASC')
             ->get()
@@ -240,7 +325,12 @@ class Payement_schedules_model extends CI_Model
             $applied += $pay_now;
         }
 
-        return $applied > 0;
+        if ($applied > 0) {
+            $this->normalize_schedule_payment_allocation($loan_number);
+            return true;
+        }
+
+        return false;
     }
 
     // get all
@@ -251,6 +341,7 @@ class Payement_schedules_model extends CI_Model
     }
 	function get_all_by_id($id)
 	{
+        $this->normalize_schedule_payment_allocation($id);
 		$this->db->select('*');
 		$this->db->order_by($this->id, $this->order);
 		$this->db->join('loan','loan.loan_id = payement_schedules.loan_id');
@@ -642,6 +733,7 @@ class Payement_schedules_model extends CI_Model
 	}
 	  function get_all_by_idPayNumber($id,$paymentnumber)
 	{
+        $this->normalize_schedule_payment_allocation($id);
 		$this->db->select('*');
 		$this->db->order_by($this->id, $this->order);
 		$this->db->join('loan','loan.loan_id = payement_schedules.loan_id');
@@ -660,6 +752,7 @@ class Payement_schedules_model extends CI_Model
      
    function get_next($pay_number,$id)
     {
+		$this->normalize_schedule_payment_allocation($id);
 
         $this->db->where('loan_id',$id);
         $this->db->where('payment_number',$pay_number);
@@ -1141,15 +1234,90 @@ $tid = "ST." . date('Y') . date('m') . date('d') . '.' . rand(100, 999);
      * Shift schedule dates to start from disbursed_date instead of loan_date
      */
     public function shift_schedules_to_disbursed_date($loan_id, $loan_date, $disbursed_date) {
-        $loan_dt = strtotime($loan_date);
-        $disb_dt = strtotime($disbursed_date);
-        $days_diff = ($disb_dt - $loan_dt) / 86400;
-        if (abs($days_diff) < 1) return;
-        $schedules = $this->db->where('loan_id', $loan_id)->get($this->table)->result();
+        $loan_ts = strtotime((string)$loan_date);
+        $disb_ts = strtotime((string)$disbursed_date);
+        if ($loan_ts === false || $disb_ts === false) {
+            return;
+        }
+
+        $loan_dt = new DateTime(date('Y-m-d', $loan_ts));
+        $disb_dt = new DateTime(date('Y-m-d', $disb_ts));
+        $days_diff = (int)$loan_dt->diff($disb_dt)->format('%r%a');
+        if ($days_diff === 0) {
+            return;
+        }
+
+        $schedules = $this->db
+            ->where('loan_id', $loan_id)
+            ->order_by('payment_number', 'ASC')
+            ->get($this->table)
+            ->result();
+
+        if (empty($schedules)) {
+            return;
+        }
+
+        $shifted = array();
+        $earliest_shifted = null;
         foreach ($schedules as $s) {
-            $new_date = date('Y-m-d', strtotime("+{$days_diff} days", strtotime($s->payment_schedule)));
-            if (date('N', strtotime($new_date)) == 7) $new_date = date('Y-m-d', strtotime('+1 day', strtotime($new_date)));
-            $this->db->where('id', $s->id)->update($this->table, array('payment_schedule' => $new_date));
+            $schedule_ts = strtotime((string)$s->payment_schedule);
+            if ($schedule_ts === false) {
+                continue;
+            }
+
+            $candidate = new DateTime(date('Y-m-d', $schedule_ts));
+            $candidate->modify(($days_diff >= 0 ? '+' : '') . $days_diff . ' days');
+            $candidate_str = $candidate->format('Y-m-d');
+
+            if ($earliest_shifted === null || $candidate_str < $earliest_shifted) {
+                $earliest_shifted = $candidate_str;
+            }
+
+            $shifted[] = array(
+                'id' => (int)$s->id,
+                'date' => $candidate_str,
+            );
+        }
+
+        if (empty($shifted)) {
+            return;
+        }
+
+        $min_allowed = $disb_dt->format('Y-m-d');
+        $extra_shift_days = 0;
+        if ($earliest_shifted !== null && $earliest_shifted < $min_allowed) {
+            $earliest_dt = new DateTime($earliest_shifted);
+            $extra_shift_days = (int)$earliest_dt->diff($disb_dt)->format('%a');
+        }
+
+        $used_dates = array();
+        foreach ($shifted as $row) {
+            $candidate = new DateTime($row['date']);
+
+            if ($extra_shift_days > 0) {
+                $candidate->modify('+' . $extra_shift_days . ' days');
+            }
+
+            if ($candidate->format('Y-m-d') < $min_allowed) {
+                $candidate = new DateTime($min_allowed);
+            }
+
+            if ((int)$candidate->format('N') === 7) {
+                $candidate->modify('+1 day');
+            }
+
+            $candidate_str = $candidate->format('Y-m-d');
+            while (isset($used_dates[$candidate_str])) {
+                $candidate->modify('+1 day');
+                if ((int)$candidate->format('N') === 7) {
+                    $candidate->modify('+1 day');
+                }
+                $candidate_str = $candidate->format('Y-m-d');
+            }
+
+            $used_dates[$candidate_str] = true;
+
+            $this->db->where('id', $row['id'])->update($this->table, array('payment_schedule' => $candidate_str));
         }
     }
 

@@ -10,6 +10,40 @@ if (!function_exists('ensure_db_loaded')) {
     }
 }
 
+if (!function_exists('safe_db_query')) {
+    function safe_db_query($sql, $binds = array(), $retryOnDisconnect = true)
+    {
+        $ci = ensure_db_loaded();
+
+        $original_debug = isset($ci->db->db_debug) ? $ci->db->db_debug : false;
+        $ci->db->db_debug = false;
+
+        $query = $ci->db->query($sql, $binds);
+        if ($query !== false) {
+            $ci->db->db_debug = $original_debug;
+            return $query;
+        }
+
+        $error = $ci->db->error();
+        $code = isset($error['code']) ? (int)$error['code'] : 0;
+
+        // Retry once when the server dropped the connection.
+        if ($retryOnDisconnect && ($code === 2006 || $code === 2013)) {
+            if (method_exists($ci->db, 'reconnect')) {
+                $ci->db->reconnect();
+            } else {
+                $ci->db->close();
+                $ci->load->database();
+            }
+
+            $query = $ci->db->query($sql, $binds);
+        }
+
+        $ci->db->db_debug = $original_debug;
+        return $query;
+    }
+}
+
 function get_all($id){
 
 
@@ -17,7 +51,8 @@ function get_all($id){
 //	$ci->load->model('Dbc_users_model');
 
     $sql="SELECT * FROM $id ";
-    return $query = $ci->db->query($sql)->result();
+    $query = safe_db_query($sql);
+    return $query ? $query->result() : array();
 
 
 }
@@ -110,8 +145,8 @@ function get_one_where($table, $where) {
 
 
 
-    // Execute the SQL query and return the results
-    return $ci->db->query($sql)->row();
+    $query = safe_db_query($sql);
+    return $query ? $query->row() : null;
 }
 function get_all_loans($id){
 
@@ -186,7 +221,8 @@ function get_by_id($table,$key,$value){
 //	$ci->load->model('Dbc_users_model');
 
     $sql="SELECT * FROM $table  WHERE $key = '$value'";
-    return $query = $ci->db->query($sql)->row();
+    $query = safe_db_query($sql);
+    return $query ? $query->row() : null;
 
 
 }
@@ -211,7 +247,8 @@ function get_by_id2($table,$where){
 //	$ci->load->model('Dbc_users_model');
 
     $sql="SELECT * FROM $table  WHERE $where";
-    return $query = $ci->db->query($sql)->row();
+    $query = safe_db_query($sql);
+    return $query ? $query->row() : null;
 
 
 }
@@ -223,7 +260,8 @@ function get_all_by_id($table,$key,$value){
 //	$ci->load->model('Dbc_users_model');
 
     $sql="SELECT * FROM $table  WHERE $key = '$value'";
-    return $query = $ci->db->query($sql)->result();
+    $query = safe_db_query($sql);
+    return $query ? $query->result() : array();
 
 
 }
@@ -458,7 +496,7 @@ function institutional_arrears(){
     $ci->load->database();
 //	$ci->load->model('Dbc_users_model');
 
-    $sql="SELECT * FROM payement_schedules  JOIN loan ON loan.loan_id = payement_schedules.loan_id JOIN loan_products ON loan_products.loan_product_id = loan.loan_product LEFT  JOIN individual_customers ic ON ic.id = payement_schedules.customer WHERE payement_schedules.status = 'NOT PAID'  AND loan.loan_status = 'ACTIVE' AND payement_schedules.payment_schedule < CURDATE()";
+    $sql="SELECT l.loan_id, SUM(CASE WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE() THEN (ps.amount - COALESCE(ps.paid_amount, 0)) ELSE 0 END) as amount FROM loan l LEFT JOIN payement_schedules ps ON ps.loan_id = l.loan_id WHERE l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' GROUP BY l.loan_id HAVING SUM(CASE WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE() THEN 1 ELSE 0 END) > 0";
     return $query = $ci->db->query($sql)->result();
 }
 function institutional_arrears_today(){

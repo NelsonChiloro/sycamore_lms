@@ -19,6 +19,59 @@ class Individual_customers extends CI_Controller
 //		$this->load->model('Chart_of_accounts_model');
         $this->load->library('form_validation');
     }
+
+	private function is_duplicate_entry_error($db_error)
+	{
+		return is_array($db_error)
+			&& isset($db_error['code'])
+			&& (int)$db_error['code'] === 1062;
+	}
+
+	private function generate_unique_client_id($max_attempts = 10)
+	{
+		for ($i = 0; $i < $max_attempts; $i++) {
+			$candidate = (string) mt_rand(10000000, 99999999);
+
+			$exists_query = $this->db
+				->select('id')
+				->from('individual_customers')
+				->where('ClientId', $candidate)
+				->limit(1)
+				->get();
+
+			if ($exists_query === false) {
+				continue;
+			}
+
+			$exists = $exists_query->row();
+
+			if (empty($exists)) {
+				return $candidate;
+			}
+		}
+
+		return null;
+	}
+
+	private function get_next_customer_account_number($offset = 0)
+	{
+		$query = $this->db->query(
+			"SELECT MAX(CAST(account_number AS UNSIGNED)) AS max_acc
+			 FROM account
+			 WHERE account_type = 1
+			 AND account_number REGEXP '^[0-9]+$'"
+		);
+
+		if ($query === false) {
+			return 500001 + (int)$offset;
+		}
+
+		$row = $query->row();
+		$max_acc = isset($row->max_acc) ? (int)$row->max_acc : 500000;
+
+		return max(500001, $max_acc + 1 + (int)$offset);
+	}
+
 	public function products($id){
     	$data = array(
     		'id'=>$id
@@ -550,12 +603,25 @@ function send_s(){
     {
     	$dd = $this->Individual_customers_model->count_it();
     	$d1 = $this->Corporate_customers_model->count_it();
-    	$clientid = rand(1001,99).rand(1001,9999);
         $this->_rules();
 
         if ($this->form_validation->run() == FALSE) {
             $this->create();
         } else {
+			$db_debug = $this->db->db_debug;
+			$this->db->db_debug = false;
+
+			$created = false;
+			$last_error = array('code' => 0, 'message' => '');
+			$max_attempts = 3;
+
+			for ($attempt = 1; $attempt <= $max_attempts; $attempt++) {
+				$clientid = $this->generate_unique_client_id();
+				if (empty($clientid)) {
+					$last_error = array('code' => 1, 'message' => 'Failed to generate unique customer ID');
+					break;
+				}
+
             $data = array(
 		'ClientId' => $clientid,
 		'Title' => $this->input->post('Title',TRUE),
@@ -582,48 +648,124 @@ function send_s(){
 		'added_by' => $this->session->userdata('user_id')
 
 	    );
-			$logger = array(
 
+            $this->db->trans_begin();
+
+            $insert_id = $this->Individual_customers_model->insert($data);
+
+			$last_error = $this->db->error();
+			if (empty($insert_id) || (!empty($last_error['code']) && (int)$last_error['code'] !== 0)) {
+				$this->db->trans_rollback();
+				if ($this->is_duplicate_entry_error($last_error) && $attempt < $max_attempts) {
+					continue;
+				}
+				break;
+			}
+
+			$account_inserted = false;
+			$base_account = $this->get_next_customer_account_number(0);
+			for ($account_attempt = 0; $account_attempt < 5; $account_attempt++) {
+				$account = (int)$base_account + $account_attempt;
+
+				// Avoid duplicate insert errors inside an active transaction.
+				// A single failed query marks CI transaction status as FALSE permanently.
+				$account_exists_query = $this->db
+					->select('account_number')
+					->from('account')
+					->where('account_number', $account)
+					->limit(1)
+					->get();
+
+				if ($account_exists_query === false) {
+					$last_error = $this->db->error();
+					break;
+				}
+
+				$account_exists = $account_exists_query->row();
+
+				if (!empty($account_exists)) {
+					continue;
+				}
+
+				$account_data = array(
+					'client_id' => $insert_id,
+					'account_number' => $account,
+					'balance' => 0,
+					'account_type' => 1,
+					'account_type_product' => 2,
+					'added_by' => $this->session->userdata('user_id'),
+				);
+
+				$this->db->insert('account', $account_data);
+				$last_error = $this->db->error();
+
+				if (empty($last_error['code']) || (int)$last_error['code'] === 0) {
+					$account_inserted = true;
+					break;
+				}
+
+				if ($this->is_duplicate_entry_error($last_error)) {
+					continue;
+				}
+
+				break;
+			}
+
+			if (!$account_inserted) {
+				$this->db->trans_rollback();
+				if ($this->is_duplicate_entry_error($last_error) && $attempt < $max_attempts) {
+					continue;
+				}
+				break;
+			}
+
+            $kyc_data = array(
+                'IDType' => $this->input->post('IDType', TRUE),
+                'IDNumber' => $this->input->post('IDNumber', TRUE),
+                'IssueDate' => $this->input->post('IssueDate', TRUE),
+                'ExpiryDate' => $this->input->post('ExpiryDate', TRUE),
+                'ClientId' => $clientid,
+                'photograph' => $this->input->post('photograph', TRUE),
+                'signature' => $this->input->post('signature', TRUE),
+                'Id_back' => $this->input->post('Id_back', TRUE),
+                'id_front' => $this->input->post('id_front', TRUE),
+            );
+            $this->Proofofidentity_model->insert($kyc_data);
+
+			$last_error = $this->db->error();
+			if ($this->db->trans_status() === FALSE || (!empty($last_error['code']) && (int)$last_error['code'] !== 0)) {
+				$this->db->trans_rollback();
+				if ($this->is_duplicate_entry_error($last_error) && $attempt < $max_attempts) {
+					continue;
+				}
+				break;
+			}
+
+			$this->db->trans_commit();
+
+			$logger = array(
 				'user_id' => $this->session->userdata('user_id'),
 				'activity' => 'Register a customer'.$data['Firstname'].' '.$data['Lastname']
-
 			);
 			log_activity($logger);
 
-            $insert_id =  $this->Individual_customers_model->insert($data);
+			$created = true;
+			break;
+			}
 
-            $at = get_all_by_id('account','account_type','1');
-            $ct = 1;
-            foreach ($at as $cc){
-                $ct ++;
+			$this->db->db_debug = $db_debug;
+
+			if ($created) {
+                $this->toaster->success('Success, customer was created pending Approval');
+                redirect(site_url('individual_customers/my_customers'));
+			} else {
+				if ($this->is_duplicate_entry_error($last_error)) {
+					$this->toaster->error('Error, duplicate reference detected while creating customer. Please retry.');
+				} else {
+					$this->toaster->error('Error, failed to create customer. Please try again.');
+				}
+				redirect(site_url('individual_customers/create'));
             }
-            $account = 500000+$ct;
-            $data = array(
-                'client_id' => $insert_id,
-                'account_number' => $account,
-                'balance' => 0,
-                'account_type' => 1,
-                'account_type_product' => 2,
-
-                'added_by' => $this->session->userdata('user_id'),
-
-            );
-
-            $this->Account_model->insert($data);
-			$data = array(
-				'IDType' => $this->input->post('IDType',TRUE),
-				'IDNumber' => $this->input->post('IDNumber',TRUE),
-				'IssueDate' => $this->input->post('IssueDate',TRUE),
-				'ExpiryDate' => $this->input->post('ExpiryDate',TRUE),
-				'ClientId' => $clientid,
-				'photograph' => $this->input->post('photograph',TRUE),
-				'signature' => $this->input->post('signature',TRUE),
-				'Id_back' => $this->input->post('Id_back',TRUE),
-				'id_front' => $this->input->post('id_front',TRUE),
-			);
-			$this->Proofofidentity_model->insert($data);
-			$this->toaster->success('Success, customer was created  pending Approval');
-            redirect(site_url('individual_customers/my_customers'));
         }
     }
     

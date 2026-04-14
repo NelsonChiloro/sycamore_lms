@@ -68,60 +68,89 @@
         color: #fff;
     }
 
-    .kpi-card {
+    .stats-grid {
+        margin-bottom: 1.35rem;
+    }
+
+    .stat-card {
         position: relative;
-        border: 0;
-        border-radius: 12px;
+        border: 1px solid #e2e8f0;
+        border-radius: 14px;
         background: #fff;
-        box-shadow: 0 7px 22px rgba(16, 24, 40, 0.08);
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+        transition: transform 0.22s ease, box-shadow 0.22s ease;
         height: 100%;
+        overflow: hidden;
     }
 
-    .kpi-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 12px 28px rgba(16, 24, 40, 0.12);
+    .stat-card:before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 4px;
+        background: linear-gradient(90deg, #0ea5e9, #0284c7);
     }
 
-    .kpi-body {
-        padding: 1.1rem 1.2rem;
+    .stat-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.12);
     }
 
-    .kpi-label {
-        font-size: 0.78rem;
-        letter-spacing: 0.02em;
+    .stat-card.stat-success:before { background: linear-gradient(90deg, #22c55e, #16a34a); }
+    .stat-card.stat-warning:before { background: linear-gradient(90deg, #f59e0b, #d97706); }
+    .stat-card.stat-info:before { background: linear-gradient(90deg, #6366f1, #4f46e5); }
+
+    .stat-body {
+        padding: 1.05rem 1.15rem 1rem;
+    }
+
+    .stat-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 0.7rem;
+    }
+
+    .stat-title {
+        font-size: 0.76rem;
+        letter-spacing: 0.04em;
         text-transform: uppercase;
-        color: #6b7280;
-        margin-bottom: 0.3rem;
-    }
-
-    .kpi-value {
-        font-size: 1.55rem;
-        font-weight: 700;
-        color: #111827;
-        line-height: 1.2;
-        margin-bottom: 0.3rem;
-    }
-
-    .kpi-subtext {
-        font-size: 0.8rem;
         color: #64748b;
+        font-weight: 700;
+        margin: 0;
     }
 
-    .kpi-icon {
-        width: 42px;
-        height: 42px;
+    .stat-icon {
+        width: 38px;
+        height: 38px;
         border-radius: 10px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        font-size: 1rem;
+        font-size: 0.96rem;
+        background: #e0f2fe;
+        color: #0c4a6e;
     }
 
-    .kpi-primary .kpi-icon { background: #e0f2fe; color: #0369a1; }
-    .kpi-success .kpi-icon { background: #dcfce7; color: #166534; }
-    .kpi-warning .kpi-icon { background: #fef3c7; color: #92400e; }
-    .kpi-info .kpi-icon { background: #e0e7ff; color: #3730a3; }
+    .stat-success .stat-icon { background: #dcfce7; color: #14532d; }
+    .stat-warning .stat-icon { background: #fef3c7; color: #78350f; }
+    .stat-info .stat-icon { background: #e0e7ff; color: #312e81; }
+
+    .stat-value {
+        font-size: 1.75rem;
+        line-height: 1.15;
+        color: #0f172a;
+        font-weight: 800;
+        margin-bottom: 0.25rem;
+    }
+
+    .stat-foot {
+        font-size: 0.81rem;
+        color: #64748b;
+        margin: 0;
+    }
 
     .dashboard-panel {
         border: 0;
@@ -236,8 +265,8 @@
             padding: 1.2rem;
         }
 
-        .kpi-value {
-            font-size: 1.3rem;
+        .stat-value {
+            font-size: 1.45rem;
         }
     }
 </style>
@@ -294,55 +323,55 @@ $recent_reports = $this->db->get('reports')->result();
             </div>
         </div>
 
-        <div class="row m-b-20">
+        <div class="row stats-grid">
             <div class="col-xl-3 col-md-6 m-b-15">
-                <div class="card kpi-card kpi-primary">
-                    <div class="kpi-body d-flex justify-content-between align-items-start">
-                        <div>
-                            <div class="kpi-label">Total Reports</div>
-                            <div class="kpi-value"><?php echo number_format($total_reports); ?></div>
-                            <div class="kpi-subtext">Across all report types</div>
+                <div class="stat-card">
+                    <div class="stat-body">
+                        <div class="stat-head">
+                            <p class="stat-title">Total Reports</p>
+                            <span class="stat-icon"><i class="anticon anticon-bar-chart"></i></span>
                         </div>
-                        <span class="kpi-icon"><i class="anticon anticon-bar-chart"></i></span>
+                        <div class="stat-value"><?php echo number_format($total_reports); ?></div>
+                        <p class="stat-foot">Across all report types</p>
                     </div>
                 </div>
             </div>
 
             <div class="col-xl-3 col-md-6 m-b-15">
-                <div class="card kpi-card kpi-success">
-                    <div class="kpi-body d-flex justify-content-between align-items-start">
-                        <div>
-                            <div class="kpi-label">Completed</div>
-                            <div class="kpi-value"><?php echo number_format($completed_reports); ?></div>
-                            <div class="kpi-subtext">Ready for download</div>
+                <div class="stat-card stat-success">
+                    <div class="stat-body">
+                        <div class="stat-head">
+                            <p class="stat-title">Completed</p>
+                            <span class="stat-icon"><i class="anticon anticon-check-circle"></i></span>
                         </div>
-                        <span class="kpi-icon"><i class="anticon anticon-check-circle"></i></span>
+                        <div class="stat-value"><?php echo number_format($completed_reports); ?></div>
+                        <p class="stat-foot">Ready for download</p>
                     </div>
                 </div>
             </div>
 
             <div class="col-xl-3 col-md-6 m-b-15">
-                <div class="card kpi-card kpi-warning">
-                    <div class="kpi-body d-flex justify-content-between align-items-start">
-                        <div>
-                            <div class="kpi-label">Pending</div>
-                            <div class="kpi-value"><?php echo number_format($pending_reports); ?></div>
-                            <div class="kpi-subtext">Awaiting completion</div>
+                <div class="stat-card stat-warning">
+                    <div class="stat-body">
+                        <div class="stat-head">
+                            <p class="stat-title">Pending</p>
+                            <span class="stat-icon"><i class="anticon anticon-sync"></i></span>
                         </div>
-                        <span class="kpi-icon"><i class="anticon anticon-sync"></i></span>
+                        <div class="stat-value"><?php echo number_format($pending_reports); ?></div>
+                        <p class="stat-foot">Awaiting completion</p>
                     </div>
                 </div>
             </div>
 
             <div class="col-xl-3 col-md-6 m-b-15">
-                <div class="card kpi-card kpi-info">
-                    <div class="kpi-body d-flex justify-content-between align-items-start">
-                        <div>
-                            <div class="kpi-label">My Activities Today</div>
-                            <div class="kpi-value"><?php echo number_format($my_today_activities); ?></div>
-                            <div class="kpi-subtext">Tracked in activity logger</div>
+                <div class="stat-card stat-info">
+                    <div class="stat-body">
+                        <div class="stat-head">
+                            <p class="stat-title">My Activities Today</p>
+                            <span class="stat-icon"><i class="anticon anticon-profile"></i></span>
                         </div>
-                        <span class="kpi-icon"><i class="anticon anticon-profile"></i></span>
+                        <div class="stat-value"><?php echo number_format($my_today_activities); ?></div>
+                        <p class="stat-foot">Tracked in activity logger</p>
                     </div>
                 </div>
             </div>

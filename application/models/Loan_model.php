@@ -141,6 +141,51 @@ class Loan_model extends CI_Model
         return date('Y-m-d', $ts);
     }
 
+    /**
+     * Atomically generate a unique (loanid, counter) pair.
+     *
+     * Uses MySQL's GET_LOCK() to serialise access so that concurrent
+     * requests cannot read the same MAX(counter) and produce a collision.
+     */
+    private function generate_loan_number()
+    {
+        // Acquire an application-level advisory lock (timeout = 10 s).
+        $lock = $this->db
+            ->query("SELECT GET_LOCK('sycamore_loan_number_gen', 10) AS got_lock")
+            ->row();
+
+        if (empty($lock) || (int)$lock->got_lock !== 1) {
+            throw new Exception('Could not acquire lock for loan number generation. Please retry.');
+        }
+
+        try {
+            $row = $this->db
+                ->select('MAX(counter) as max_c')
+                ->get('loan')
+                ->row();
+
+            $max_counter = (int)($row->max_c ?? 0);
+
+            // Keep incrementing until we find a loanid not yet in use.
+            do {
+                $max_counter++;
+                $loanid = 'SCL' . date('Ymd') . (100 + $max_counter - 1);
+                $exists = $this->db
+                    ->select('loan_id')
+                    ->from('loan')
+                    ->where('loan_number', $loanid)
+                    ->limit(1)
+                    ->get()
+                    ->row();
+            } while (!empty($exists));
+
+        } finally {
+            $this->db->query("DO RELEASE_LOCK('sycamore_loan_number_gen')");
+        }
+
+        return array('loanid' => $loanid, 'fcounter' => $max_counter);
+    }
+
     private function build_month_end_schedule_date($base_date, $offset_months = 0)
     {
         $normalized_base_date = $this->normalize_date_value($base_date);
@@ -4536,11 +4581,9 @@ class Loan_model extends CI_Model
 
     }
 function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_term, $start_date, $loan_customer, $customer_type, $worthness_file, $narration, $added_by, $funds_source = null, $batch = null, $from_group = 'No', $group_id = null) {
-  $this->db->select('MAX(counter) as max_c');
-  $lid = $this->db->get('loan');
-  $result = $lid->row();
-  $loanid = 'SCL'.date("Ymd").(100+$result->max_c);
-  $fcounter = $result->max_c+1;
+  $loan_num_data = $this->generate_loan_number();
+  $loanid   = $loan_num_data['loanid'];
+  $fcounter = $loan_num_data['fcounter'];
 
   // Get loan product details
   $loan = check_exist_in_table('loan_products', 'loan_product_id', $product_id);
@@ -4667,11 +4710,9 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
   return $id;
 }
     function add_amortization_straight_weekly($principal,$loan_amount, $product_id, $loan_term, $start_date,$loan_customer, $customer_type, $worthness_file,$narration,$added_by, $funds_source = null, $batch = null, $from_group = 'No', $group_id = null) {
-		$this->db->select('MAX(counter) as max_c');
-		$lid = $this->db->get('loan');
-		$result = $lid->row();
-		$loanid='SCL'.date("Ymd").(100+$result->max_c);
-		$fcounter=$result->max_c+1;
+		$loan_num_data = $this->generate_loan_number();
+		$loanid   = $loan_num_data['loanid'];
+		$fcounter = $loan_num_data['fcounter'];
 
 
 
@@ -4823,12 +4864,10 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
             throw new Exception('Loan period must be greater than zero.');
         }
 
-		// Generate loan number
-		$this->db->select('MAX(counter) as max_c');
-		$lid = $this->db->get('loan');
-		$result = $lid->row();
-		$loanid = 'SCL' . date("Ymd") . (100 + $result->max_c);
-		$fcounter = $result->max_c + 1;
+		// Generate loan number (lock-safe)
+		$loan_num_data = $this->generate_loan_number();
+		$loanid   = $loan_num_data['loanid'];
+		$fcounter = $loan_num_data['fcounter'];
 
 		// Get loan product details
 		$loan = $this->db->select("*")->from('loan_products')->where('loan_product_id', $product_id)->get()->row();
@@ -4845,17 +4884,10 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
 		} else {
 			$processing_fee_percent = 0;
 		}
-       
-		// DEBUG: Log processing fee calculation
-		error_log("WEEKLY FUNCTION - Original: {$original_amount}, Processing %: {$processing_fee_percent}");
 
 		// Calculate processing fee and add to principal
 		$processing_fee_amount = ($processing_fee_percent / 100) * $original_amount;
-		//$amount = $original_amount + $processing_fee_amount; // New principal with processing fee included
-		$amount = $principal; // New principal with processing fee included
-
-		// DEBUG: Log new amount
-		error_log("WEEKLY FUNCTION - Processing Fee: {$processing_fee_amount}, New Amount: {$amount}");
+		$amount = $principal; // Principal already includes processing fee from caller
 
 		// Set frequency parameters for Weekly
 		$days = 7;
@@ -4877,9 +4909,6 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
 		$total_admin_fees = 0;
 		$total_loan_cover = 0;
 
-		// DEBUG: Log starting balance
-		error_log("WEEKLY FUNCTION - Starting balance for interest calc: {$current_balance1}, Interest Rate: {$i}");
-
 		// Calculate total interest, admin fees, and loan cover
 		while ($current_balance1 > 0) {
 			$towards_interest1 = ($i / 12) * $current_balance1;
@@ -4898,9 +4927,6 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
 			$total_loan_cover = $total_loan_cover + $towards_lc;
 			$current_balance1 = $current_balance1 - $towards_balance1;
 		}
-
-		// DEBUG: Log final totals
-		error_log("WEEKLY FUNCTION - Total Interest: {$total_interest1}, Pay Total: " . ($total_interest1 + $amount + $total_admin_fees + $total_loan_cover));
 
 		$pay_total = $total_interest1 + $amount + $total_admin_fees + $total_loan_cover;
 
@@ -5016,12 +5042,10 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
             throw new Exception('Loan period must be greater than zero.');
         }
 
-		// Generate loan number
-		$this->db->select('MAX(counter) as max_c');
-		$lid = $this->db->get('loan');
-		$result = $lid->row();
-		$loanid = 'SCL' . date("Ymd") . (100 + $result->max_c);
-		$fcounter = $result->max_c + 1;
+		// Generate loan number (lock-safe)
+		$loan_num_data = $this->generate_loan_number();
+		$loanid   = $loan_num_data['loanid'];
+		$fcounter = $loan_num_data['fcounter'];
 
 		// Get loan product details
 		$loan = $this->db->select("*")->from('loan_products')->where('loan_product_id', $product_id)->get()->row();
@@ -5883,11 +5907,12 @@ $this->db->where('payment_number',$i);
 	{
 		//set Time Zone
 		//date_default_timezone_set('Africa/Blantyre');
-		$this->db->select('MAX(counter) as max_c');
-		$lid = $this->db->get('loan');
-		$result = $lid->row();
-		$loanid='SCL'.date("Ymd").(100+$result->max_c);
-		$fcounter=$result->max_c+1;
+		// Generate a collision-safe loan number before sub-functions are dispatched.
+		// Sub-functions each call generate_loan_number() themselves, so this value
+		// is only used by the else-path (reducing-balance monthly) below.
+		$loan_num_data = $this->generate_loan_number();
+		$loanid   = $loan_num_data['loanid'];
+		$fcounter = $loan_num_data['fcounter'];
         $amount = $this->normalize_numeric_value($lamount);
         $loan_date = $this->normalize_date_value($ldate);
         $months = (int)$this->normalize_numeric_value($lmonths);
@@ -5940,12 +5965,11 @@ $this->db->where('payment_number',$i);
     }
         elseif($loan->method == "Reducing balance" && $loan->frequency == "Bi weekly"){
         // For Reducing Balance Bi-weekly, processing fee is added to principal before calculation
-        error_log("LOAN DEBUG - Taking Reducing Balance Bi-weekly path");
         return $this->add_reducing_balance_biweekly($amount, $months, $product_id, $loan_date, $loan_customer, $customer_type, $worthness_file, $narration, $added_by, $branch, $funds_source, $batch, $from_group, $group_id);
     }
         else {
 			// For Reducing Balance + Weekly/Bi-weekly, add processing fee to principal FIRST
-			error_log("LOAN DEBUG - Taking ELSE path");
+
 			$original_principal = $amount;
 			if(strcasecmp(trim($loan->method), "Reducing Balance") == 0 && (strcasecmp(trim($loan->frequency), "Weekly") == 0 || strcasecmp(trim($loan->frequency), "Bi weekly") == 0)) {
 				// Get processing fee
@@ -6056,6 +6080,17 @@ $this->db->where('payment_number',$i);
 			$total_admin_fees1 = 0;
 			$total_loan_cover = 0;
 			$total_loan_cover1 = 0;
+
+            // Guard against formatted numeric strings propagating into schedule math.
+            $monthly_payment = $this->normalize_numeric_value($monthly_payment);
+            $monthly_payment1 = $this->normalize_numeric_value($monthly_payment1);
+            $monthly_payment_config = $this->normalize_numeric_value($monthly_payment_config);
+            $extra_interest = $this->normalize_numeric_value($extra_interest);
+            $i = $this->normalize_numeric_value($i);
+            $af = $this->normalize_numeric_value($af);
+            $lc = $this->normalize_numeric_value($lc);
+            $current_balance = $this->normalize_numeric_value($current_balance);
+            $current_balance1 = $this->normalize_numeric_value($current_balance1);
 
 
 			$ii = 1;
@@ -6384,12 +6419,17 @@ $this->db->where('payment_number',$i);
                             $newdate = strtotime('+' . $frequency . ' month', strtotime($date));
                         }
 
+                        $newdate_ts = is_numeric($newdate) ? (int)$newdate : strtotime((string)$newdate);
+                        if ($newdate_ts === false) {
+                            $newdate_ts = strtotime((string)$date);
+                        }
+
 						//check if payment date landed on Sunday, push to Monday
-						if (date('D', $newdate) == 'Sun') {
-							$newdate = strtotime('+1 day', $newdate);
+						if (date('D', $newdate_ts) == 'Sun') {
+							$newdate_ts = strtotime('+1 day', $newdate_ts);
 						}
 
-						$newdate = date('Y-m-d', $newdate);
+						$newdate = date('Y-m-d', $newdate_ts);
 
 						$this->db->insert(
 							'payement_schedules', array(
@@ -6879,12 +6919,17 @@ $this->db->where('payment_number',$i);
                             $newdate = strtotime('+' . $frequency . ' month', strtotime($date));
                         }
 
-                        //check if payment date landed on Sunday, push to Monday
-                        if (date('D', $newdate) == 'Sun') {
-                            $newdate = strtotime('+1 day', $newdate);
+                        $newdate_ts = is_numeric($newdate) ? (int)$newdate : strtotime((string)$newdate);
+                        if ($newdate_ts === false) {
+                            $newdate_ts = strtotime((string)$date);
                         }
 
-                        $newdate = date('Y-m-d', $newdate);
+                        //check if payment date landed on Sunday, push to Monday
+                        if (date('D', $newdate_ts) == 'Sun') {
+                            $newdate_ts = strtotime('+1 day', $newdate_ts);
+                        }
+
+                        $newdate = date('Y-m-d', $newdate_ts);
                         $this->db->where('loan_id',$id);
                         $this->db->where('payment_number',$ii);
                         $this->db->update(

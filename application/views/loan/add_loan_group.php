@@ -127,10 +127,10 @@ $loan_types = $this->Loan_products_model->get_all();
                                         <select name="funds_source" class="form-control select2">
                                             <option value="">--select funds source--</option>
                                             <?php
-                                            $funds_sources = get_all('funds_source');
                                             foreach ($funds_sources as $fs){
+                                                $selected = set_value('funds_source') == $fs->funds_source ? 'selected' : '';
                                             ?>
-                                                <option value="<?php echo $fs->funds_source; ?>">
+                                                <option value="<?php echo $fs->funds_source; ?>" <?php echo $selected; ?>>
                                                     <?php echo $fs->source_name; ?>
                                                 </option>
                                             <?php

@@ -20,6 +20,7 @@ class Loan extends CI_Controller
         $this->load->model('Group_loan_tracker_model');
         $this->load->model('Tellering_model');
         $this->load->model('Collateral_model');
+        $this->load->model('Funds_source_model');
 
         $this->load->model('Loan_products_model');
         $this->load->model('Payement_schedules_model');
@@ -54,6 +55,13 @@ class Loan extends CI_Controller
             'customer_name' => $customer_name,
             'loan_details' => $loan_details
         );
+    }
+
+    private function is_duplicate_entry_error($db_error)
+    {
+        return is_array($db_error)
+            && isset($db_error['code'])
+            && (int)$db_error['code'] === 1062;
     }
     public function correct_loan(){
         $this->Loan_model->delete_replace_loans();
@@ -350,6 +358,7 @@ class Loan extends CI_Controller
 
     public function add(){
         $data['customers'] =$this->Individual_customers_model->get_all_active();
+        $data['funds_sources'] = $this->Funds_source_model->get_all_funds_sources();
         $menu_toggle['toggles'] = 23;
         $this->load->view('admin/header', $menu_toggle);
         $this->load->view('loan/add_loan',$data);
@@ -357,6 +366,7 @@ class Loan extends CI_Controller
     }
     public function add_group(){
         $data['customers'] =$this->Groups_model->get_all_active();
+        $data['funds_sources'] = $this->Funds_source_model->get_all_funds_sources();
         $menu_toggle['toggles'] = 23;
         $this->load->view('admin/header', $menu_toggle);
         $this->load->view('loan/add_loan_group',$data);
@@ -365,6 +375,7 @@ class Loan extends CI_Controller
     
     public function add_group_members(){
         $data['customers'] = $this->Groups_model->get_all_active();
+        $data['funds_sources'] = $this->Funds_source_model->get_all_funds_sources();
         
         // Generate batch number: BATCH + current date + random number
         $batch_number = 'BATCH' . date('Ymd') . rand(1000, 9999);
@@ -768,8 +779,7 @@ class Loan extends CI_Controller
                         'disbursed_date' => $disbursed_date
                     );
                     $this->Loan_model->update($loan->loan_id, $update_data);
-                    // Shift schedule dates to start from disbursed_date (Issue 6)
-                    $this->Payement_schedules_model->shift_schedules_to_disbursed_date($loan->loan_id, $loan->loan_date, $disbursed_date);
+                    // pay_off_loan() already updates/aligns schedule dates during disbursement.
                     
                     // Check if the update was successful by verifying the database
                     $this->db->where('loan_id', $loan->loan_id);
@@ -937,7 +947,7 @@ class Loan extends CI_Controller
                 $this->db->select('payment_number, total_late_charge');
                 $this->db->from('payement_schedules');
                 $this->db->where('loan_id', $loan->loan_id);
-                $this->db->where('status', 'NOT PAID');
+                $this->db->where_in('status', array('NOT PAID', 'PARTIAL PAID'));
                 $this->db->order_by('payment_number', 'ASC');
                 $this->db->limit(1);
                 $next_payment = $this->db->get()->row();
@@ -950,7 +960,7 @@ class Loan extends CI_Controller
                 $this->db->select('SUM(amount - paid_amount) as outstanding');
                 $this->db->from('payement_schedules');
                 $this->db->where('loan_id', $loan->loan_id);
-                $this->db->where('status', 'NOT PAID');
+                $this->db->where_in('status', array('NOT PAID', 'PARTIAL PAID'));
                 $outstanding_row = $this->db->get()->row();
 
                 $outstanding = round((float)($outstanding_row ? $outstanding_row->outstanding : 0), 2);
@@ -1216,24 +1226,25 @@ class Loan extends CI_Controller
                 $customer_name = $group ? $group->group_name : 'Unknown Group';
             }
             
-            // Get next payment details - find the first unpaid payment
+            // Get next payment details - find the earliest incomplete schedule
             $this->db->where('loan_id', $loan_id);
-            $this->db->where('status', 'NOT PAID');
+            $this->db->where_in('status', array('NOT PAID', 'PARTIAL PAID'));
             $this->db->order_by('payment_number', 'ASC');
             $this->db->limit(1);
             $next_payment = $this->db->get('payement_schedules')->row();
-            
             if(!$next_payment) {
                 echo json_encode(['success' => false, 'message' => 'No pending payments found']);
                 return;
             }
-            
+
+            $remaining_due = (float)$next_payment->amount - (float)$next_payment->paid_amount;
+
             echo json_encode([
                 'success' => true,
                 'customer_name' => $customer_name,
                 'payment_number' => $next_payment->payment_number,
-                'amount' => $next_payment->amount,
-                'amount_formatted' => number_format($next_payment->amount, 2),
+                'amount' => $remaining_due,
+                'amount_formatted' => number_format($remaining_due, 2),
                 'due_date' => $next_payment->payment_schedule
             ]);
             
@@ -1270,9 +1281,9 @@ class Loan extends CI_Controller
                 $customer_name = $group ? $group->group_name : 'Unknown Group';
             }
             
-            // Get next payment details - find the first unpaid payment
+            // Get next payment details - find the earliest incomplete schedule
             $this->db->where('loan_id', $loan_id);
-            $this->db->where('status', 'NOT PAID');
+            $this->db->where_in('status', array('NOT PAID', 'PARTIAL PAID'));
             $this->db->order_by('payment_number', 'ASC');
             $this->db->limit(1);
             $next_payment = $this->db->get('payement_schedules')->row();
@@ -1581,7 +1592,64 @@ class Loan extends CI_Controller
         $serial = $this->input->post('serial');
         $value = $this->input->post('value');
         $description = $this->input->post('desc');
-        $result = $this->Loan_model->add_loan($this->input->post('amount'), $this->input->post('months'), $this->input->post('loan_type'), $this->input->post('loan_date'), $this->input->post('customer'), $this->input->post('customer_type'), $this->input->post('worthness_file'), $this->input->post('narration'), $this->input->post('user'), $branch_id->id, $this->input->post('funds_source'));
+
+        $db_debug = $this->db->db_debug;
+        $this->db->db_debug = false;
+
+        $result = null;
+        $loan_created = false;
+        $last_error = array('code' => 0, 'message' => '');
+        $max_attempts = 3;
+
+        for ($attempt = 1; $attempt <= $max_attempts; $attempt++) {
+            $this->db->trans_begin();
+
+            $result = $this->Loan_model->add_loan(
+                $this->input->post('amount'),
+                $this->input->post('months'),
+                $this->input->post('loan_type'),
+                $this->input->post('loan_date'),
+                $this->input->post('customer'),
+                $this->input->post('customer_type'),
+                $this->input->post('worthness_file'),
+                $this->input->post('narration'),
+                $this->input->post('user'),
+                $branch_id->id,
+                $this->input->post('funds_source')
+            );
+
+            $last_error = $this->db->error();
+            $has_error = ($this->db->trans_status() === false)
+                || (!empty($last_error['code']) && (int)$last_error['code'] !== 0)
+                || empty($result);
+
+            if ($has_error) {
+                $this->db->trans_rollback();
+
+                if ($this->is_duplicate_entry_error($last_error) && $attempt < $max_attempts) {
+                    continue;
+                }
+
+                break;
+            }
+
+            $this->db->trans_commit();
+            $loan_created = true;
+            break;
+        }
+
+        if (!$loan_created) {
+            $this->db->db_debug = $db_debug;
+            if ($this->is_duplicate_entry_error($last_error)) {
+                $this->toaster->error('Error, duplicate loan reference detected. Please retry.');
+            } else {
+                $this->toaster->error('Error, failed to create loan. Please try again.');
+            }
+            redirect($_SERVER['HTTP_REFERER']);
+            return;
+        }
+
+        $collateral_failures = 0;
 
 
         for ($i = 0; $i < $number_of_files_uploaded; $i++) {
@@ -1624,12 +1692,23 @@ class Loan extends CI_Controller
 
                 $this->Collateral_model->insert($data);
 
+                $collateral_error = $this->db->error();
+                if (!empty($collateral_error['code']) && (int)$collateral_error['code'] !== 0) {
+                    $collateral_failures++;
+                }
+
             }//if file uploaded
 
         }//for loop ends here
 
+        $this->db->db_debug = $db_debug;
 
-        $this->toaster->success('Success, loan was created  pending authorisation');
+
+        if ($collateral_failures > 0) {
+            $this->toaster->success('Success, loan was created pending authorisation. Some collateral files were not saved.');
+        } else {
+            $this->toaster->success('Success, loan was created  pending authorisation');
+        }
 
         redirect('loan/track');
 
@@ -3417,8 +3496,15 @@ class Loan extends CI_Controller
             $paid_date = date('Y-m-d');
             $loan_account = get_by_id('loan', 'loan_id', $has_loan->loan_id);
             $tid = "TR-S" . rand(100, 9999) . date('Y') . date('m') . date('d');
-            $get_account = $this->Tellering_model->get_teller_account(72);
+            $get_account = $this->Tellering_model->get_teller_account($this->session->userdata('user_id'));
+            if (empty($get_account)) {
+                $get_account = $this->Tellering_model->get_teller_account1();
+            }
 
+            if (empty($get_account)) {
+                log_message('error', 'pay_off_loan: No teller account found for user ' . $this->session->userdata('user_id'));
+                return;
+            }
 
             $teller_account = $get_account->account;
 
