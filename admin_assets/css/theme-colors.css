@@ -1,0 +1,5 @@
+/* Theme Color Overrides - Match sycamore-rodlick-infocus (green #24C16B) */
+:root {
+    --blue: #24C16B;
+    --primary: #24C16B;
+}
