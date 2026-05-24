@@ -13,7 +13,10 @@
 	<div class="card">
 		<div class="card-body" style="border: thick orange solid;border-radius: 14px;">
 			<a href="<?php echo base_url('Employees/create')?>" class="btn btn-sm btn-primary"><i class="anticon anticon-plus-square" style="color: white; font-size: 20px;"></i>Add Employee</a>
+<<<<<<< HEAD
 			<a href="<?php echo site_url('employees/map_supervisors')?>" class="btn btn-sm btn-outline-primary ml-2">Map RO → Supervisors</a>
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 			<div class="m-t-25">
 				<table id="data-table" class="table">
 					<thead>

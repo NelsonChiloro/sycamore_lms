@@ -90,6 +90,7 @@ $countryd = $this->Geo_countries_model->get_all();
 							</div>
 							<div class="form-group col-6">
 								<label for="int">Role * <?php echo form_error('Role') ?></label>
+<<<<<<< HEAD
 								<select class="form-control" name="Role" id="Role">
 									<option value="">--select--</option>
 									<?php
@@ -99,6 +100,14 @@ $countryd = $this->Geo_countries_model->get_all();
                                         $is_ro = $ci->Employees_model->role_is_relationship_officer($item->RoleName);
 										?>
 										<option value="<?php echo (int) $item->id?>" data-is-relationship-officer="<?php echo $is_ro ? '1' : '0'; ?>" <?php if($Role==$item->id){echo "selected";} ?>><?php echo htmlspecialchars($item->RoleName); ?></option>
+=======
+								<select class="form-control" name="Role" >
+									<option value="">--select--</option>
+									<?php
+									foreach ($r as $item){
+										?>
+										<option value="<?php echo  $item->id?>" <?php if($Role==$item->id){echo "selected";} ?>><?php echo  $item->RoleName?></option>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
 										<?php
 									}
@@ -120,6 +129,7 @@ $countryd = $this->Geo_countries_model->get_all();
 									?>
 								</select>
 							</div>
+<<<<<<< HEAD
                             <div class="form-group col-6" id="supervisor-field-wrap" style="display: none;">
                                 <label for="Supervisor">Relationship supervisor * <?php echo form_error('Supervisor') ?></label>
                                 <select class="form-control" name="Supervisor" id="Supervisor">
@@ -134,6 +144,8 @@ $countryd = $this->Geo_countries_model->get_all();
                                     ?>
                                 </select>
                             </div>
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 							<input type="text" name="system_date" value="<?php echo $this->session->userdata('system_date') ?>" hidden>
 							<input type="hidden" name="id" value="<?php echo $id; ?>" />
 							<button type="submit" class="btn btn-primary"><?php echo $button ?></button>
@@ -142,6 +154,7 @@ $countryd = $this->Geo_countries_model->get_all();
 		</div>
 	</div>
 </div>
+<<<<<<< HEAD
 <script>
 (function () {
     var roleMap = <?php echo isset($roles_json) ? $roles_json : '{"officer":[],"supervisor":[]}'; ?>;
@@ -192,3 +205,5 @@ $countryd = $this->Geo_countries_model->get_all();
     }
 })();
 </script>
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d

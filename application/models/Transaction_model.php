@@ -30,6 +30,7 @@ class Transaction_model extends CI_Model
         $this->db->order_by('transaction.system_time', 'DESC');
         return $this->db->get()->result();
     }
+<<<<<<< HEAD
 
     /**
      * Loan account transactions for a set of loan numbers (batch statement).
@@ -69,6 +70,8 @@ class Transaction_model extends CI_Model
 
         return $this->db->get()->result();
     }
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
     // get all
     function get_all()
     {

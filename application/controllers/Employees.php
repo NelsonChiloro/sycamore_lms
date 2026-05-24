@@ -22,8 +22,16 @@ class Employees extends CI_Controller
 	}
     public function index()
     {
+<<<<<<< HEAD
         $data = array(
             'employees_data' => $this->Employees_model->get_all(),
+=======
+
+
+        $data = array(
+            'employees_data' => $this->Employees_model->get_all(),
+
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         );
 		$this->load->view('admin/header');
 		$this->load->view('employees/employees_list', $data);
@@ -52,7 +60,10 @@ class Employees extends CI_Controller
 		'Country' => $row->Country,
 		'Role' => $row->RoleName,
 		'Branch' => $row->Branch,
+<<<<<<< HEAD
                 'SupervisorName' => $this->format_supervisor_name(isset($row->Supervisor) ? $row->Supervisor : null),
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 		'EmploymentStatus' => $row->EmploymentStatus,
 		'LastUpdatedOn' => $row->LastUpdatedOn,
 		'CreatedOn' => $row->CreatedOn,
@@ -105,6 +116,7 @@ class Employees extends CI_Controller
         echo json_encode($res);
     }
 
+<<<<<<< HEAD
     /**
      * Map existing relationship officers to relationship supervisors.
      */
@@ -168,6 +180,13 @@ class Employees extends CI_Controller
             'action' => site_url('employees/create_action'),
             'roles_json' => json_encode($this->build_role_type_map($roles)),
             'relationship_supervisors' => $this->Employees_model->get_relationship_supervisors(),
+=======
+    public function create() 
+    {
+        $data = array(
+            'button' => 'Create',
+            'action' => site_url('employees/create_action'),
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 	    'id' => set_value('id'),
 	    'Firstname' => set_value('Firstname'),
 	    'Middlename' => set_value('Middlename'),
@@ -183,7 +202,10 @@ class Employees extends CI_Controller
 	    'Country' => set_value('Country'),
 	    'Role' => set_value('Role'),
 	    'Branch' => set_value('Branch'),
+<<<<<<< HEAD
             'Supervisor' => set_value('Supervisor'),
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 	    'EmploymentStatus' => set_value('EmploymentStatus'),
 	    'LastUpdatedOn' => set_value('LastUpdatedOn'),
 	    'CreatedOn' => set_value('CreatedOn'),
@@ -200,12 +222,15 @@ class Employees extends CI_Controller
         if ($this->form_validation->run() == FALSE) {
             $this->create();
         } else {
+<<<<<<< HEAD
             $role_row = $this->Roles_model->get_by_id($this->input->post('Role', TRUE));
             $is_ro = $role_row && $this->Employees_model->role_is_relationship_officer($role_row->RoleName);
             $supervisor_val = null;
             if ($is_ro) {
                 $supervisor_val = (int) $this->input->post('Supervisor', TRUE);
             }
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             $data = array(
 		'Firstname' => $this->input->post('Firstname',TRUE),
 		'Middlename' => $this->input->post('Middlename',TRUE),
@@ -221,7 +246,10 @@ class Employees extends CI_Controller
 		'Country' => $this->input->post('Country',TRUE),
 		'Role' => $this->input->post('Role',TRUE),
 		'BranchCode' => $this->input->post('Branch',TRUE),
+<<<<<<< HEAD
                 'Supervisor' => $supervisor_val > 0 ? $supervisor_val : null,
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 			);
 
 //			$logger = array(
@@ -254,12 +282,18 @@ class Employees extends CI_Controller
         $row = $this->Employees_model->get_by_id($id);
 
         if ($row) {
+<<<<<<< HEAD
             $roles = $this->Roles_model->get_all();
             $data = array(
                 'button' => 'Update',
                 'action' => site_url('employees/update_action'),
                 'roles_json' => json_encode($this->build_role_type_map($roles)),
                 'relationship_supervisors' => $this->Employees_model->get_relationship_supervisors(),
+=======
+            $data = array(
+                'button' => 'Update',
+                'action' => site_url('employees/update_action'),
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 		'id' => set_value('id', $row->empid),
 		'Firstname' => set_value('Firstname', $row->Firstname),
 		'Middlename' => set_value('Middlename', $row->Middlename),
@@ -275,7 +309,10 @@ class Employees extends CI_Controller
 		'Country' => set_value('Country', $row->Country),
 		'Role' => set_value('Role', $row->Role),
 		'Branch' => set_value('Branch', $row->BranchCode),
+<<<<<<< HEAD
                 'Supervisor' => set_value('Supervisor', $row->Supervisor),
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
 	    );
 			$this->load->view('admin/header');
@@ -294,12 +331,15 @@ class Employees extends CI_Controller
         if ($this->form_validation->run() == FALSE) {
             $this->update($this->input->post('id', TRUE));
         } else {
+<<<<<<< HEAD
             $role_row = $this->Roles_model->get_by_id($this->input->post('Role', TRUE));
             $is_ro = $role_row && $this->Employees_model->role_is_relationship_officer($role_row->RoleName);
             $supervisor_val = null;
             if ($is_ro) {
                 $supervisor_val = (int) $this->input->post('Supervisor', TRUE);
             }
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             $data = array(
 		'Firstname' => $this->input->post('Firstname',TRUE),
 		'Middlename' => $this->input->post('Middlename',TRUE),
@@ -315,7 +355,10 @@ class Employees extends CI_Controller
 		'Country' => $this->input->post('Country',TRUE),
 		'Role' => $this->input->post('Role',TRUE),
 		'BranchCode' => $this->input->post('Branch',TRUE),
+<<<<<<< HEAD
                 'Supervisor' => $supervisor_val > 0 ? $supervisor_val : null,
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
 	    );
 
@@ -370,7 +413,10 @@ class Employees extends CI_Controller
 	$this->form_validation->set_rules('City', 'city', 'trim|required');
 	$this->form_validation->set_rules('Country', 'country', 'trim|required');
 	$this->form_validation->set_rules('Role', 'role', 'trim|required');
+<<<<<<< HEAD
         $this->form_validation->set_rules('Supervisor', 'relationship supervisor', 'trim|callback_validate_supervisor_for_role');
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
 
 
@@ -390,7 +436,10 @@ class Employees extends CI_Controller
 	$this->form_validation->set_rules('City', 'city', 'trim|required');
 	$this->form_validation->set_rules('Country', 'country', 'trim|required');
 	$this->form_validation->set_rules('Role', 'role', 'trim|required');
+<<<<<<< HEAD
         $this->form_validation->set_rules('Supervisor', 'relationship supervisor', 'trim|callback_validate_supervisor_for_role');
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
 
 
@@ -398,6 +447,7 @@ class Employees extends CI_Controller
 	$this->form_validation->set_error_delimiters('<span class="text-danger">', '</span>');
     }
 
+<<<<<<< HEAD
     public function validate_supervisor_for_role($supervisor_id)
     {
         $role_id = $this->input->post('Role');
@@ -443,6 +493,8 @@ class Employees extends CI_Controller
         return $map;
     }
 
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 }
 
 

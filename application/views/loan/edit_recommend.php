@@ -14,7 +14,10 @@
             <div style="overflow-y: auto"">
             <?php
             $loand = get_all_where('approval_edits','type = "Loan edit" AND state ="Initiated"', 'approval_edits_id','DESC');
+<<<<<<< HEAD
             $this->load->model('Group_batch_model');
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
             
             ?>
@@ -46,12 +49,16 @@
                 $n =1;
                 foreach ($loand as $loans)
                 {
+<<<<<<< HEAD
                     $is_group_batch = $this->Group_batch_model->is_group_batch_approval($loans);
                     $batch_payload = $is_group_batch ? json_decode($loans->new_info) : null;
                     $loan = get_by_id('loan','loan_id',$loans->id);
                     if (!$loan) {
                         continue;
                     }
+=======
+                    $loan = get_by_id('loan','loan_id',$loans->id);
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                     if($loan->customer_type=='group'){
                         $group = $this->Groups_model->get_by_id($loan->loan_customer);
 
@@ -66,9 +73,15 @@
                     <tr>
 
                         <td><?php echo $n ?></td>
+<<<<<<< HEAD
                         <td><?php echo $is_group_batch ? 'GROUP BATCH: ' . htmlspecialchars((string)($batch_payload->batch ?? $loans->summary)) : $loan->loan_number ?></td>
 <!--                        <td>--><?php //echo $loan->product_name ?><!--</td>-->
                         <td><?php if ($is_group_batch): ?><?php echo htmlspecialchars($loans->summary); ?> (<?php echo count($batch_payload->members ?? array()); ?> loans)<?php else: ?><a href="<?php echo base_url($preview_url).$loan->loan_customer?>""><?php echo $customer_name?></a><?php endif; ?></td>
+=======
+                        <td><?php echo $loan->loan_number ?></td>
+<!--                        <td>--><?php //echo $loan->product_name ?><!--</td>-->
+                        <td><a href="<?php echo base_url($preview_url).$loan->loan_customer?>""><?php echo $customer_name?></a></td>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                         <td><?php echo $loan->loan_date ?></td>
                         <td>MK<?php echo number_format($loan->loan_principal,2) ?></td>
                         <td><?php echo $loan->loan_period ?></td>
@@ -85,11 +98,15 @@
 
 
                         <td width="500">
+<<<<<<< HEAD
                             <?php if ($is_group_batch && !empty($batch_payload->batch)): ?>
                             <a href="<?php echo base_url('loan/group_batch_loans/').rawurlencode($batch_payload->batch); ?>" class="btn btn-sm btn-info">View batch</a>
                             <?php else: ?>
                             <a href="<?php echo base_url('loan/view/').$loan->loan_id?>" class="btn btn-sm btn-info">View loan</a>
                             <?php endif; ?>
+=======
+                            <a href="<?php echo base_url('loan/view/').$loan->loan_id?>" class="btn btn-sm btn-info">View loan</a>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                             <a href="<?php echo base_url('Approval_general/auth_data/').$loans->approval_edits_id."/edit_recommend/edit_approve"; ?>" class="btn btn-sm btn-warning">Recommend/Reject</a>
                         </td>
 

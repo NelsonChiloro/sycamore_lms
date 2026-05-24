@@ -11,8 +11,11 @@
 	</div>
 	<div class="card">
 		<div class="card-body" style="border: thick #24C16B solid;border-radius: 14px;">
+<<<<<<< HEAD
             <?php if (!empty($show_loan_filters)) { $this->load->view('loan/_loan_list_filters'); } ?>
             <hr>
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             <div style="overflow-y: auto"">
 			<table  id="data-table" class="tableCss">
 				<thead>
@@ -33,14 +36,21 @@
 
 					<th>Loan Status</th>
                     <th>Branch</th>
+<<<<<<< HEAD
                     <th>RBM Loan Classification</th>
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 					<th>Loan Added Date</th>
 					<th>Action</th>
 
 				</tr>
 				</thead>
 				<tbody><?php
+<<<<<<< HEAD
 				$n = isset($list_offset) ? ($list_offset + 1) : 1;
+=======
+				$n = 1;
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
 				foreach ($loan_data as $loan)
 				{
@@ -63,7 +73,10 @@
 
 						<td><?php echo $loan->loan_status ?></td>
 						<td><?php echo !empty($loan->branch_display_name) ? htmlspecialchars($loan->branch_display_name) : 'N/A'; ?></td>
+<<<<<<< HEAD
 						<td><?php echo !empty($loan->rbm_classification) ? htmlspecialchars($loan->rbm_classification) : 'Standard'; ?></td>
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 						<td><?php echo $loan->loan_added_date ?></td>
 						<td><a href="<?php echo base_url('loan/repayment_view_pay_off/').$loan->loan_id?>">Pay off</a></td>
 
@@ -75,7 +88,10 @@
 				</tbody>
 			</table>
         </div>
+<<<<<<< HEAD
         <?php $this->load->view('loan/_loan_list_pagination'); ?>
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 		</div>
 	</div>
 </div>

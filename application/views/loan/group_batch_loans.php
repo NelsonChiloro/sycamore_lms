@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 ﻿<div class="main-content">
+=======
+<div class="main-content">
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
     <div class="page-header">
         <h2 class="header-title">Group Batch Loans - <?php echo $batch; ?></h2>
         <div class="header-sub-title">
@@ -9,6 +13,7 @@
             </nav>
         </div>
     </div>
+<<<<<<< HEAD
 
     <?php if (!empty($pending_batch_edit)): ?>
     <div class="alert alert-warning alert-dismissible fade show" role="alert">
@@ -26,6 +31,8 @@
         <button type="button" class="close" data-dismiss="alert" aria-label="Close"><span aria-hidden="true">&times;</span></button>
     </div>
     <?php endif; ?>
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
     
     <!-- Batch Summary -->
     <div class="card mb-4">
@@ -68,6 +75,7 @@
                     </button>
                     <?php endif; ?>
                     <?php if($has_approved && $permissions['can_disburse']): ?>
+<<<<<<< HEAD
                     <button class="btn btn-danger mr-2" onclick="openBatchDisburseModal('<?php echo $batch; ?>')">
                         <i class="fas fa-money-bill-wave mr-2"></i>Disburse Batch
                     </button>
@@ -87,6 +95,22 @@
                     </a>
                     <a href="<?php echo base_url('loan/batch_report/').rawurlencode($batch); ?>" class="btn btn-outline-light mr-2" target="_blank" title="Combined batch summary report">
                         <i class="fas fa-file-alt mr-2"></i>Batch Summary Report
+=======
+                    <button class="btn btn-danger mr-2" onclick="disburseBatch('<?php echo $batch; ?>')">
+                        <i class="fas fa-money-bill-wave mr-2"></i>Disburse Batch
+                    </button>
+                    <?php endif; ?>
+                    <?php if($has_payable && $permissions['can_pay']): ?>
+                    <button class="btn btn-success mr-2" onclick="openBatchPaymentModal()">
+                        <i class="fas fa-hand-holding-usd mr-2"></i>Pay Batch
+                    </button>
+                    <?php endif; ?>
+                    <a href="<?php echo base_url('loan/batch_report/').$batch; ?>" class="btn btn-success" target="_blank">
+                        <i class="fas fa-file-pdf mr-2"></i>Print Batch Report
+                    </a>
+                    <a href="<?php echo base_url('loan/restructure?batch=').urlencode($batch); ?>" class="btn btn-info">
+                        <i class="fas fa-edit mr-2"></i>Restructure Loans
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                     </a>
                 </div>
             </div>
@@ -121,6 +145,7 @@
         </div>
     </div>
 
+<<<<<<< HEAD
     <?php if (!empty($batch_summary)): ?>
     <div class="card mb-4 group-finance-dashboard">
         <div class="card-header bg-dark text-white">
@@ -196,6 +221,20 @@
             'total_paid' => $payment_balance ? (float) $payment_balance->total_paid : 0.0,
             'total_outstanding' => $payment_balance ? (float) $payment_balance->remaining_balance : 0.0,
         );
+=======
+    <!-- Individual Loan Details -->
+    <?php 
+    $loan_counter = 1;
+    foreach ($loans as $loan): 
+        // Calculate payment schedule totals
+        $this->db->select('
+            SUM(CASE WHEN status = "PAID" THEN amount ELSE 0 END) as total_paid,
+            SUM(CASE WHEN status = "NOT PAID" THEN amount ELSE 0 END) as total_outstanding,
+            COUNT(*) as total_payments
+        ');
+        $this->db->where('loan_id', $loan->loan_id);
+        $payment_summary = $this->db->get('payement_schedules')->row();
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
     ?>
     
     <!-- Loan Section LOAN <?php echo $loan->loan_number; ?> -->
@@ -321,6 +360,12 @@
                         <a href="<?php echo base_url('loan/view/').$loan->loan_id; ?>" class="btn btn-primary btn-sm">
                             <i class="fas fa-eye mr-1"></i>View Details
                         </a>
+<<<<<<< HEAD
+=======
+                        <a href="<?php echo base_url('loan/report/').$loan->loan_id; ?>" class="btn btn-info btn-sm" target="_blank">
+                            <i class="fas fa-file-pdf mr-1"></i>Print Report
+                        </a>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                         <button class="btn btn-warning btn-sm" onclick="toggleAmortization(<?php echo $loan->loan_id; ?>)">
                             <i class="fas fa-table mr-1"></i>View Amortization
                         </button>
@@ -576,6 +621,7 @@
     </div>
 </div>
 
+<<<<<<< HEAD
 <!-- Batch Disburse Modal -->
 <div aria-hidden="true" class="onboarding-modal modal fade" id="batch_disburse_modal" role="dialog" tabindex="-1">
     <div class="modal-dialog modal-centered" role="document">
@@ -661,14 +707,21 @@
 </div>
 <?php endif; ?>
 
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 <!-- Group Batch Payment Modal -->
 <div aria-hidden="true" class="onboarding-modal modal fade" id="group_batch_payment_modal" role="dialog" tabindex="-1">
     <div class="modal-dialog modal-xl modal-centered" role="document">
         <div class="modal-content text-left">
             <span></span><button style="float: right;" aria-label="Close" class="close" data-dismiss="modal" type="button"><span class="close-label">Close</span><span class="anticon anticon-close"></span></button>
             <div class="onboarding-content" style="padding: 1em;">
+<<<<<<< HEAD
                 <h4 class="onboarding-title">Group Loan Repayment — <?php echo $batch; ?></h4>
                 <p style="color: #555;">Enter payment details once, then allocate the total across members. Allocation must equal the deposited amount.</p>
+=======
+                <h4 class="onboarding-title">Pay Batch - <?php echo $batch; ?></h4>
+                <p style="color: #555;">Enter the group's total deposited amount, one shared Transaction ID/Receipt Number, and distribute the amount to members below.</p>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                 <form class="form-row" id="group_batch_payment_form" method="POST" action="<?php echo base_url('loan/batch_pay'); ?>" onsubmit="doSubmitBatchPayment(); return false;">
                     <input type="hidden" name="batch" value="<?php echo $batch; ?>">
                     <div class="form-group col-md-4">
@@ -685,10 +738,17 @@
                     </div>
                     <div class="form-group col-md-4">
                         <label for="group_batch_pdate"><strong>Payment Date</strong></label>
+<<<<<<< HEAD
                         <input type="date" class="form-control" name="pdate" id="group_batch_pdate" />
                     </div>
                     <div class="form-group col-md-12 mt-2">
                         <label id="group_batch_ref_label" for="group_batch_payment_reference"><strong>Transaction / Receipt Number <span style="color:red;">*</span></strong></label>
+=======
+                        <input type="datetime-local" class="form-control" name="pdate" id="group_batch_pdate" />
+                    </div>
+                    <div class="form-group col-md-12 mt-2">
+                        <label id="group_batch_ref_label" for="group_batch_payment_reference"><strong>Reference Number <span style="color:red;">*</span></strong></label>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                         <div class="input-group">
                             <input type="text" class="form-control" name="payment_reference" id="group_batch_payment_reference"
                                    placeholder="Enter Transaction ID or Receipt Number" required
@@ -705,6 +765,7 @@
                             <table class="table table-bordered table-striped" id="group-batch-allocation-table">
                                 <thead class="table-light">
                                     <tr>
+<<<<<<< HEAD
                                         <th>Member Name</th>
                                         <th>Loan Number</th>
                                         <th>Outstanding Balance</th>
@@ -727,10 +788,40 @@
                                                         <br><small class="text-muted"><?php echo date('M d, Y', strtotime($member_row->installment_date)); ?></small>
                                                     <?php endif; ?>
                                                 </td>
+=======
+                                        <th>Loan #</th>
+                                        <th>Member</th>
+                                        <th>Outstanding (MWK)</th>
+                                        <th>Amount to Pay (MWK)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($loans as $batch_loan): ?>
+                                        <?php if (strtoupper(trim($batch_loan->loan_status)) == 'ACTIVE'): ?>
+                                            <?php
+                                            $this->db->select('SUM(amount - paid_amount) as outstanding');
+                                            $this->db->from('payement_schedules');
+                                            $this->db->where('loan_id', $batch_loan->loan_id);
+                                            $this->db->where('status', 'NOT PAID');
+                                            $batch_outstanding = $this->db->get()->row();
+                                            $member_outstanding = (float)($batch_outstanding && $batch_outstanding->outstanding ? $batch_outstanding->outstanding : 0);
+                                            ?>
+                                            <tr>
+                                                <td><strong><?php echo $batch_loan->loan_number; ?></strong></td>
+                                                <?php
+                                                $display_member_name = !empty($batch_loan->member_name) ? (string)$batch_loan->member_name : trim((string)$batch_loan->Firstname . ' ' . (string)$batch_loan->Lastname);
+                                                if ($display_member_name === '') {
+                                                    $display_member_name = !empty($batch_loan->customer_group_name) ? $batch_loan->customer_group_name : ('Customer #' . $batch_loan->loan_customer);
+                                                }
+                                                ?>
+                                                <td><?php echo $display_member_name; ?></td>
+                                                <td class="text-danger"><strong>MK <?php echo number_format($member_outstanding, 2); ?></strong></td>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                                                 <td>
                                                     <input
                                                         type="number"
                                                         class="form-control batch-member-amount"
+<<<<<<< HEAD
                                                         name="allocations[<?php echo (int)$member_row->loan_id; ?>]"
                                                         step="0.01"
                                                         min="0"
@@ -739,10 +830,25 @@
                                                         data-outstanding="<?php echo number_format($member_row->outstanding, 2, '.', ''); ?>"
                                                         oninput="updateBatchAllocationTotals()"
                                                         onchange="updateBatchAllocationTotals()"
+=======
+                                                        name="allocations[<?php echo $batch_loan->loan_id; ?>]"
+                                                        step="0.01"
+                                                        min="0"
+                                                        max="<?php echo number_format($member_outstanding, 2, '.', ''); ?>"
+                                                        data-loan-number="<?php echo $batch_loan->loan_number; ?>"
+                                                        data-outstanding="<?php echo number_format($member_outstanding, 2, '.', ''); ?>"
+                                                        oninput="updateBatchAllocationTotals()"
+                                                        onchange="updateBatchAllocationTotals()"
+                                                        onkeyup="updateBatchAllocationTotals()"
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                                                         placeholder="0.00"
                                                     >
                                                 </td>
                                             </tr>
+<<<<<<< HEAD
+=======
+                                        <?php endif; ?>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                                     <?php endforeach; ?>
                                 </tbody>
                             </table>
@@ -754,17 +860,28 @@
                         <div id="batch-debug-alert" class="alert alert-warning" style="display:none;"></div>
                         <div id="batch-status-alert" class="alert alert-info" style="display:none;"></div>
                         <div class="alert alert-info mb-2">
+<<<<<<< HEAD
                             <strong>Total Allocated:</strong> <span id="batch-allocated-total">MK 0.00</span>
                             | <strong>Deposited:</strong> <span id="batch-total-deposited-display">MK 0.00</span>
                             | <strong>Difference:</strong> <span id="batch-allocation-difference">MK 0.00</span>
                         </div>
                         <div class="alert alert-secondary mb-0">
                             Allocated repayment amount must equal total deposited amount (difference must be MK 0.00).
+=======
+                            <strong>Total Entered for Members:</strong> <span id="batch-allocated-total">MWK 0.00</span>
+                        </div>
+                        <div class="alert alert-secondary mb-0">
+                            Payment will proceed only when the sum of member amounts exactly matches the total deposited amount.
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                         </div>
                     </div>
 
                     <div class="col-12 mt-3">
+<<<<<<< HEAD
                         <button class="btn btn-danger btn-block" type="button" id="submit_group_batch_payment" onclick="doSubmitBatchPayment()" style="display:none;">Submit Group Repayment</button>
+=======
+                        <button class="btn btn-danger btn-block" type="button" id="submit_group_batch_payment" onclick="doSubmitBatchPayment()">Submit Batch Payment</button>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                     </div>
                 </form>
             </div>
@@ -836,6 +953,7 @@
     font-weight: 700;
 }
 
+<<<<<<< HEAD
 .group-finance-dashboard .finance-card {
     border-radius: 10px;
     padding: 1rem 1.1rem;
@@ -903,6 +1021,8 @@
     color: #e74a3b;
 }
 
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 .badge-lg {
     padding: 0.5rem 1rem;
     font-size: 0.9rem;
@@ -1247,6 +1367,7 @@ function approveBatch(batchNumber) {
     });
 }
 
+<<<<<<< HEAD
 function openBatchDisburseModal(batchNumber) {
     $('#batch_disburse_number').val(batchNumber);
     $('#batch_disburse_label').text(batchNumber);
@@ -1267,17 +1388,38 @@ function confirmBatchDisburse() {
     button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Processing...';
     button.disabled = true;
 
+=======
+function disburseBatch(batchNumber) {
+    if (!confirm('Are you sure you want to disburse ALL APPROVED loans in batch ' + batchNumber + '? This action will:\n- Change status to ACTIVE\n- Create payment schedules\n- Process cash transactions\n- Send SMS notifications (if enabled)\n\nThis action cannot be undone.')) {
+        return;
+    }
+    
+    // Show loading state
+    const button = event.target;
+    const originalText = button.innerHTML;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Processing...';
+    button.disabled = true;
+    
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
     $.ajax({
         url: '<?php echo base_url("loan/batch_disburse"); ?>',
         type: 'POST',
         data: {
+<<<<<<< HEAD
             batch: batchNumber,
             disbursement_date: disbursementDate
+=======
+            batch: batchNumber
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         },
         dataType: 'json',
         success: function(response) {
             if (response.success) {
                 alert('Success: ' + response.message);
+<<<<<<< HEAD
+=======
+                // Refresh the page to show updated statuses
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                 location.reload();
             } else {
                 alert('Error: ' + response.message);
@@ -1288,6 +1430,10 @@ function confirmBatchDisburse() {
             console.error('AJAX Error:', error);
         },
         complete: function() {
+<<<<<<< HEAD
+=======
+            // Restore button state
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             button.innerHTML = originalText;
             button.disabled = false;
         }
@@ -1379,6 +1525,7 @@ function updateBatchAllocationTotals() {
     totalDeposited = roundToTwo(totalDeposited);
 
     $('#batch-allocated-total').text(formatBatchMoney(allocated));
+<<<<<<< HEAD
     $('#batch-total-deposited-display').text(formatBatchMoney(totalDeposited));
 
     var diff = roundToTwo(totalDeposited - allocated);
@@ -1413,6 +1560,33 @@ function updateBatchAllocationTotals() {
 
 function openGroupEditModal() {
     $('#group_edit_modal').modal('show');
+=======
+
+    var diff = Math.abs(allocated - totalDeposited);
+    var submitButton = $('#submit_group_batch_payment');
+    var alertBox = $('#batch-sum-alert');
+
+    if (hasExceededOutstanding) {
+        alertBox.text('Amount entered for loan ' + exceededLoan + ' exceeds its outstanding balance.').show();
+        submitButton.prop('disabled', true);
+        return;
+    }
+
+    if (totalDeposited <= 0 && allocated > 0) {
+        alertBox.text('Please enter the total deposited amount at the top.').show();
+        submitButton.prop('disabled', true);
+        return;
+    }
+
+    if (allocated > 0 && diff > 0.01) {
+        alertBox.text('Sum mismatch: Total deposited is ' + formatBatchMoney(totalDeposited) + ' but member allocations add up to ' + formatBatchMoney(allocated) + '.').show();
+        submitButton.prop('disabled', true);
+        return;
+    }
+
+    alertBox.hide();
+    submitButton.prop('disabled', false);
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 }
 
 function showBatchStatus(message, type) {
@@ -1545,5 +1719,9 @@ $(document).ready(function() {
         }
     });
 });
+<<<<<<< HEAD
 
 </script>
+=======
+</script>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d

@@ -44,6 +44,7 @@ class Transactions_model extends CI_Model
     }
     function search2($id)
     {
+<<<<<<< HEAD
         return $this->search2_filtered($id);
     }
 
@@ -69,6 +70,12 @@ class Transactions_model extends CI_Model
             $this->db->where('DATE(transaction.system_time) <=', date('Y-m-d', strtotime($to)));
         }
 
+=======
+        $r = get_by_id('loan','loan_id', $id);
+        $this->db->order_by('system_time', $this->order);
+        $this->db->where('transaction.account_number', $r->loan_number);
+
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         return $this->db->get('transaction')->result();
     }
 	public function sum_admin_charges($from,$to){

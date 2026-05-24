@@ -274,12 +274,21 @@ private function get_summary_metrics()
 			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' THEN COALESCE(ps.padmin_fee, 0) ELSE 0 END) AS outstanding_af,
             SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS total_unpaid,
             SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS total_arrears,
+<<<<<<< HEAD
             SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS one_day_arrears,
             SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 3 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS three_day_arrears,
             SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS week_arrears,
             SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS month_arrears,
             SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 60 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS two_month_arrears,
             SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS three_month_arrears,
+=======
+            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS one_day_arrears,
+            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 3 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS three_day_arrears,
+            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS week_arrears,
+            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS month_arrears,
+            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 60 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS two_month_arrears,
+            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS three_month_arrears,
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             ROUND(
                 (
                     SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END)
@@ -646,7 +655,10 @@ public function tray(){
         $idofficer = $this->input->get('idofficer');
 		if($search=="filter"){
 			$data['loan_data'] = $this->Payement_schedules_model->arrears($product,$from,$to,$by_date,$idofficer );
+<<<<<<< HEAD
 			$data['arrears_total'] = $this->Payement_schedules_model->sum_institutional_arrears($product, $from, $to, $by_date, $idofficer);
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 			$menu_toggle['toggles'] = 40;
 
 			$this->load->view('admin/header', $menu_toggle);
@@ -666,7 +678,10 @@ public function tray(){
 $this->excel_arrears($data);
 		}else {
 			$data['loan_data'] = $this->Payement_schedules_model->arrears($product,$from,$to,$by_date,$idofficer );
+<<<<<<< HEAD
 			$data['arrears_total'] = $this->Payement_schedules_model->sum_institutional_arrears($product, $from, $to, $by_date, $idofficer);
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 			$menu_toggle['toggles'] = 40;
 
 			$this->load->view('admin/header', $menu_toggle);
@@ -1086,7 +1101,21 @@ public function payments_filter() {
      * @return string RBM classification
      */
     private function determine_rbm_classification($days_in_arrears) {
+<<<<<<< HEAD
         return determine_rbm_classification($days_in_arrears);
+=======
+        if ($days_in_arrears < 30) {
+            return 'Standard';
+        } else if ($days_in_arrears >= 30 && $days_in_arrears < 60) {
+            return 'Special Mention';
+        } else if ($days_in_arrears >= 60 && $days_in_arrears < 90) {
+            return 'Substandard';
+        } else if ($days_in_arrears >= 90 && $days_in_arrears < 180) {
+            return 'Doubtful';
+        } else {
+            return 'Loss';
+        }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
     }
 
     /**
@@ -1304,10 +1333,14 @@ public function payments_filter() {
             xlsWriteLabel($tablebody, $kolombody++, $data->loan_number);
             xlsWriteLabel($tablebody, $kolombody++, $data->product_name);
             xlsWriteLabel($tablebody, $kolombody++, $data->payment_schedule);
+<<<<<<< HEAD
             $amount_due = isset($data->amount_due)
                 ? (float) $data->amount_due
                 : ((float) $data->amount - (float) $data->paid_amount);
             xlsWriteNumber($tablebody, $kolombody++, $amount_due);
+=======
+            xlsWriteLabel($tablebody, $kolombody++, $data->amount);
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             xlsWriteLabel($tablebody, $kolombody++, $data->payment_number);
 
             xlsWriteLabel($tablebody, $kolombody++, $data->efname.' '.$data->elname);

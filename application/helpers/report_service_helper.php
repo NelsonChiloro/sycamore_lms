@@ -25,6 +25,7 @@ if (!function_exists('report_service_url')) {
 
         return report_service_base_url() . '/' . $normalized_path;
     }
+<<<<<<< HEAD
 }
 
 if (!function_exists('report_preview_url')) {
@@ -54,4 +55,6 @@ if (!function_exists('report_preview_url')) {
 
         return base_url($previewLink);
     }
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 }

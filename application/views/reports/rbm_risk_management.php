@@ -76,7 +76,11 @@
                     <th>Client</th>
                     <th>Product</th>
                     <th>Status</th>
+<<<<<<< HEAD
                     <th>RBM Loan Classification</th>
+=======
+                    <th>Classification</th>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                     <th>Officer</th>
                     <th>Risk Officer</th>
                     <th>Amount</th>
@@ -145,6 +149,24 @@
 </div>
 
 <?php
+<<<<<<< HEAD
+=======
+// Helper function to determine RBM classification
+function determine_rbm_classification($days_in_arrears) {
+    if ($days_in_arrears < 30) {
+        return 'Standard';
+    } else if ($days_in_arrears >= 30 && $days_in_arrears < 60) {
+        return 'Special Mention';
+    } else if ($days_in_arrears >= 60 && $days_in_arrears < 90) {
+        return 'Substandard';
+    } else if ($days_in_arrears >= 90 && $days_in_arrears < 180) {
+        return 'Doubtful';
+    } else {
+        return 'Loss';
+    }
+}
+
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 // Helper function to get color based on RBM classification
 function get_rbm_classification_color($classification) {
     switch ($classification) {

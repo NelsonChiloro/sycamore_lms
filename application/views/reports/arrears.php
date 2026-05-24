@@ -33,8 +33,12 @@ $products = get_all_loans('loan');
 							?>
 						</select>
 						<select name="by_date" class="sselect" id="by_date">
+<<<<<<< HEAD
 							<option value="All" <?php if($this->input->get('by_date')=="All"){echo "selected";} ?>>All arrears</option>
 							<option value="Custom" <?php if($this->input->get('by_date')=="Custom" || $this->input->get('by_date')===""){echo "selected";} ?>>Custom</option>
+=======
+							<option value="Custom">Custom</option>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 							<option value="one_day" <?php  if($this->input->get('by_date')=="one_day"){echo "selected";} ?>>One day</option>
 							<option value="three_days" <?php  if($this->input->get('by_date')=="three_days"){echo "selected";} ?>>Three days</option>
 							<option value="week" <?php  if($this->input->get('by_date')=="week"){echo "selected";} ?>>One week</option>
@@ -86,6 +90,7 @@ $products = get_all_loans('loan');
 				<tbody>
 				<?php
 				$n = 1;
+<<<<<<< HEAD
 				$totals = isset($arrears_total) ? (float) $arrears_total : 0;
 				foreach ($loan_data as $loan)
 				{
@@ -95,6 +100,12 @@ $products = get_all_loans('loan');
 					if (!isset($arrears_total)) {
 						$totals += $amount_due;
 					}
+=======
+$totals =0;
+				foreach ($loan_data as $loan)
+				{
+					$totals +=$loan->amount;
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 					if($loan->customer_type=='group'){
 						$group = $this->Groups_model->get_by_id($loan->loan_customer);
 
@@ -115,7 +126,11 @@ $products = get_all_loans('loan');
 						<td><?php echo $loan->product_name ?></td>
 						<td><?php echo $loan->payment_schedule ?></td>
 <!--						<td>MK--><?php //echo number_format($loan->loan_principal,2) ?><!--</td>-->
+<<<<<<< HEAD
 						<td><?php echo number_format($amount_due, 2); ?></td>
+=======
+						<td><?php echo $loan->amount ?></td>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 						<td><?php echo $loan->payment_number ?></td>
 						<td><?php echo $loan->efname." ".$loan->elname ?></td>
 

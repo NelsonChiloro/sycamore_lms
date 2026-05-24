@@ -26,6 +26,7 @@ function auth_logger($data){
 
 }
 
+<<<<<<< HEAD
 /**
  * Format a value for approval preview tables (scalars, arrays, objects).
  */
@@ -60,3 +61,5 @@ function approval_is_group_batch_payload($info)
         && is_array($info->members);
 }
 
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d

@@ -227,6 +227,7 @@ function get_by_id($table,$key,$value){
 
 }
 
+<<<<<<< HEAD
 /**
  * Resolve a branches row when loan.branch may store branches.id, Code, or BranchCode.
  *
@@ -297,6 +298,8 @@ function get_branch_for_loan_value($branch_value)
     return $query ? $query->row() : null;
 }
 
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 function get_paid_date($table,$key1,$key2){
 
 
@@ -1112,12 +1115,20 @@ function loan_collection($loan){
 }
 
 function get_loan_outstanding_balance($loan_id) {
+<<<<<<< HEAD
     $CI =& get_instance();
 
+=======
+    // Get CI instance
+    $CI =& get_instance();
+
+    // Load database if not already loaded
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
     if (!isset($CI->db)) {
         $CI->load->database();
     }
 
+<<<<<<< HEAD
     $CI->load->model('Payement_schedules_model');
     $payments = $CI->Payement_schedules_model->get_all_by_id($loan_id);
     if (empty($payments)) {
@@ -1131,4 +1142,23 @@ function get_loan_outstanding_balance($loan_id) {
     );
 
     return $summary->remaining_balance;
+=======
+    // Get sum of all scheduled amounts and paid amounts for this loan
+    $query = $CI->db->select('SUM(amount) as total_amount, SUM(paid_amount) as total_paid')
+        ->from('payement_schedules')  // Replace with your actual payment schedules table name
+        ->where('loan_id', $loan_id)
+        ->get();
+
+    if ($query->num_rows() == 0) {
+        return 0; // No payment schedules found for this loan
+    }
+
+    $result = $query->row();
+
+    // Calculate outstanding balance (total amount - total paid)
+    $outstanding_balance = $result->total_amount - $result->total_paid;
+
+    // Return the outstanding balance (ensure it's not negative)
+    return max(0, $outstanding_balance);
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 }

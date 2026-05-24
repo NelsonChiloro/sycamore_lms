@@ -1,6 +1,10 @@
 <div class="main-content">
     <div class="page-header">
+<<<<<<< HEAD
         <h2 class="header-title"> Approval preview<?php if (!empty($is_group_batch_edit)): ?> — Group batch<?php endif; ?></h2>
+=======
+        <h2 class="header-title"> Approval preview</h2>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         <div class="header-sub-title">
             <nav class="breadcrumb breadcrumb-dash">
                 <a href="<?php echo base_url('Admin')?>" class="breadcrumb-item"><i class="anticon anticon-home m-r-5"></i>Home</a>
@@ -11,6 +15,7 @@
     </div>
     <div class="card">
         <div class="card-body" style="border: thick #153505 solid;border-radius: 14px;">
+<<<<<<< HEAD
             <?php if (!empty($is_group_batch_edit)): ?>
             <div class="alert alert-info">
                 <strong>Group batch edit:</strong>
@@ -79,6 +84,8 @@
                 </table>
             </div>
             <?php endif; ?>
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             <div class="row">
                 <div class="col-lg-12 border-right">
                     <div class="row">
@@ -93,6 +100,7 @@
                                 </thead>
                                 <tbody>
                                 <?php
+<<<<<<< HEAD
                                 $skip_old = !empty($is_group_batch_edit) ? array('members') : array();
                                 foreach ((array) $old_info as $key => $value) {
                                     if (in_array($key, $skip_old, true)) {
@@ -105,6 +113,19 @@
                                     </tr>
                                 <?php } ?>
                                 </tbody>
+=======
+                                foreach ($old_info as $key=>$value){
+                                    ?>
+                                    <tr>
+                                        <td><?php echo $key;?></td>
+                                        <td class="bg-warning text-white"><?php echo $value?></td>
+                                    </tr>
+                                    <?php
+                                }
+                                ?>
+                                </tbody>
+
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                             </table>
                         </div>
                         <div class="col-lg-5">
@@ -113,11 +134,16 @@
                                 <thead class="btn-primary text-white">
                                 <tr>
                                     <th>Key</th>
+<<<<<<< HEAD
                                     <th>Value</th>
+=======
+                                    <th >Value</th>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                                 </tr>
                                 </thead>
                                 <tbody>
                                 <?php
+<<<<<<< HEAD
                                 $prefix = 'sy_';
                                 $skip_new = !empty($is_group_batch_edit) ? array('members', 'shared') : array();
                                 foreach ((array) $new_info as $keys => $values) {
@@ -134,10 +160,33 @@
                                     </tr>
                                 <?php } ?>
                                 </tbody>
+=======
+                                $prefix = "sy_";
+                                foreach ($new_info as $keys=>$values){
+                                    if (strpos($keys, $prefix) === 0) {
+                                        // Prefix exists
+
+                                    } else {
+                                        // Prefix does not exist
+
+                                    ?>
+                                    <tr>
+                                        <td><?php echo $keys;?></td>
+                                        <td class="bg-danger text-white"><?php echo $values?></td>
+                                    </tr>
+                                    <?php
+                                    }
+                                }
+                                ?>
+
+                                </tbody>
+
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                             </table>
                         </div>
                         <div class="col-lg-2">
                             <h4>Auth actions</h4>
+<<<<<<< HEAD
                             <?php if ($state == 'Initiated'): ?>
                             <form action="<?php echo base_url('Approval_general/') . $action_recommend; ?>" method="post">
                                 <textarea required class="form-control" name="comment" cols="30" rows="5" placeholder="write comment of your action"></textarea>
@@ -154,10 +203,47 @@
                                 <input onclick="return confirm('Are you sure you want to Approve this?')" name="approval" type="submit" class="btn btn-success mt-2" value="Approve">
                             </form>
                             <?php endif; ?>
+=======
+                            <?php
+                            if($state=="Initiated"){
+                            ?>
+                            <form action="<?php echo base_url('Approval_general/').$action_recommend ?>" method="post">
+                                <textarea required class="form-control" name="comment" id="" cols="30" rows="5" placeholder="write comment of your action"></textarea>
+                                <input type='hidden' value="<?php echo $id ?>" name="id">
+
+                                    <input type="submit" name="approval" class="btn btn-primary" onclick="return confirm('Are you sure you want to reject this?')" value="Reject">
+                                    <input onclick="return confirm('Are you sure you want to Recommend this?')" name="approval" type="submit" class="btn btn-success" value="recommend">
+
+                            </form>
+                                <?php
+                            }
+                            ?>
+                            <?php
+                            if($state=="recommended"){
+                                ?>
+                                <form action="<?php echo base_url('Approval_general/').$action_approve ?>" method="post">
+                                    <textarea required class="form-control" name="comment" id="" cols="30" rows="5" placeholder="write comment of your action"></textarea>
+                                    <input type='hidden' value="<?php echo $id ?>" name="id">
+
+                                    <input type="submit" name="reject" class="btn btn-primary" onclick="return confirm('Are you sure you want to reject this?')" value="Reject">
+                                    <input onclick="return confirm('Are you sure you want to Recommend this?')" name="approval" type="submit" class="btn btn-success" value="Approve">
+
+
+
+
+                                </form>
+                                <?php
+                            }
+                            ?>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                         </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
+<<<<<<< HEAD
 </div>
+=======
+</div>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d

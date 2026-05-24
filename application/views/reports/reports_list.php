@@ -49,12 +49,37 @@
                         <?php echo round($reports->percentage,2) ?>%
                         </td>
                     <td style="white-space: nowrap;"><?php
+<<<<<<< HEAD
                         $previewLink = report_preview_url($reports->download_link);
                         if ($previewLink) {
                             ?>
                             <a href="<?php echo htmlspecialchars($previewLink); ?>" target="_blank" rel="noopener">Preview</a>
                         <?php
                         }
+=======
+                        if (!empty($reports->download_link)) {
+                            $previewLink = str_replace('\\', '/', $reports->download_link);
+
+                            if (!preg_match('#^https?://#i', $previewLink)) {
+                                if (preg_match('#^[A-Za-z]:/#', $previewLink) === 1 || strpos($previewLink, '/') === 0) {
+                                    $previewLink = 'bulk_report/reports/' . basename($previewLink);
+                                } else {
+                                    $previewLink = preg_replace('#^/?bulk_report/#', 'bulk_report/', $previewLink);
+                                    if (strpos($previewLink, 'bulk_report/') !== 0) {
+                                        $previewLink = 'bulk_report/' . ltrim($previewLink, '/');
+                                    }
+                                }
+
+                                $previewLink = base_url($previewLink);
+                            }
+                            ?>
+                            <a href="<?php echo $previewLink; ?>" target="_blank" rel="noopener">Preview</a>
+                            /
+                            <a href="<?php echo base_url('report/download/'.$reports->id); ?>">Export</a>
+                        <?php
+                        }
+
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                         ?></td>
 
 

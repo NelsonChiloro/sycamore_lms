@@ -11,7 +11,66 @@
 	</div>
 	<div class="card">
 		<div class="card-body" style="border: thick #153505 solid;border-radius: 14px;">
+<<<<<<< HEAD
             <?php if (!empty($show_loan_filters)) { $this->load->view('loan/_loan_list_filters'); } ?>
+=======
+<div>
+    <?php
+    $products = get_all('loan_products');
+    $officer = get_all('employees');
+    $branches = get_all('branches');
+
+    ?>
+    <form action="<?php echo base_url('loan/track') ?>" method="get">
+        Branch: <select name="branch" id="" class="select2">
+            <option value="All">All Branch</option>
+            <?php
+
+            foreach ($branches as $branch){
+                ?>
+                <option value="<?php  echo $branch->Code; ?>" <?php if($this->input->get('branch')==$branch->Code){ echo "selected"; }?>><?php echo $branch->BranchName; ?></option>
+                <?php
+            }
+            ?>
+        </select>
+        Product: <select name="product" id="" class="select2">
+
+            <option value="All">All Products</option>
+            <?php
+
+            foreach ($products as $product){
+                ?>
+                <option value="<?php  echo $product->loan_product_id; ?>"><?php echo $product->product_name.'('.$product->product_code.')'; ?></option>
+            <?php
+            }
+            ?>
+        </select> Status: <select name="status" id="">
+            <option value="All">All statuses</option>
+            <option value="ACTIVE">ACTIVE</option>
+            <option value="INITIATED">INITIATED</option>
+            <option value="RECOMMENDED">RECOMMENDED</option>
+            <option value="APPROVED">APPROVED</option>
+            <option value="REJECTED">APPROVED</option>
+            <option value="CLOSED">CLOSED</option>
+            <option value="WRITTEN_OFF">WRITTEN_OFF</option>
+            <option value="DELETED">ARCHIVED</option>
+        </select>  Officer:
+        <select name="user" id="" class="select2">
+            <option value="All">All officers</option>
+            <?php
+
+            foreach ($officer as $item){
+                ?>
+                <option value="<?php  echo $item->id; ?>"><?php echo $item->Firstname." ".$item->Lastname?></option>
+                <?php
+            }
+            ?>
+        </select> Date from:
+        <input type="date" name="from"> Date to: <input type="date" name="to"> <input type="submit" value="filter" name="search">
+    </form>
+</div>
+            <br>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             <hr>
             <div style="overflow-y: auto"">
         <table  id="data-table1" class="tableCss">
@@ -33,7 +92,10 @@
 		<th>Loan File</th>
 		<th>Loan Status</th>
         <th>Branch</th>
+<<<<<<< HEAD
         <th>RBM Loan Classification</th>
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 		<th>Loan officer</th>
 		<th>Funds Source</th>
 		<th>Customer Group</th>
@@ -44,7 +106,11 @@
             </tr>
 			</thead>
 			<tbody><?php
+<<<<<<< HEAD
 			$n = isset($list_offset) ? ($list_offset + 1) : 1;
+=======
+			$n = 1;
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
             foreach ($loan_data as $loan)
             {
@@ -71,8 +137,12 @@
 			<td><a href="<?php echo base_url('uploads/').$loan->worthness_file?>" download >Download file <i class="fa fa-download fa-flip"></i></a></td>
 
 			<td><?php echo $loan->loan_status ?></td>
+<<<<<<< HEAD
 			<td><?php echo !empty($loan->branch_display_name) ? htmlspecialchars($loan->branch_display_name) : 'N/A'; ?></td>
 			<td><?php echo !empty($loan->rbm_classification) ? htmlspecialchars($loan->rbm_classification) : 'Standard'; ?></td>
+=======
+			<td><?php echo !empty($loan->branch_display_name) ? htmlspecialchars($loan->branch_display_name) : 'Blantyre'; ?></td>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 			<td><?php echo $loan->efname,' '.$loan->elname ?></td>
 			<td><?php echo $loan->funds_source_name ?></td>
 			<td><?php echo isset($loan->customer_group_name) ? $loan->customer_group_name : 'N/A' ?></td>
@@ -91,7 +161,10 @@
 			</tbody>
         </table>
         </div>
+<<<<<<< HEAD
         <?php $this->load->view('loan/_loan_list_pagination'); ?>
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 		</div>
 	</div>
 </div>

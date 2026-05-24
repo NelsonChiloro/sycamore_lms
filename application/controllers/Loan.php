@@ -25,8 +25,11 @@ class Loan extends CI_Controller
         $this->load->model('Loan_products_model');
         $this->load->model('Payement_schedules_model');
         $this->load->model('Loan_customer_first_drafr_model');
+<<<<<<< HEAD
         $this->load->model('Group_batch_model');
         $this->load->model('Employees_model');
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         $this->load->library('form_validation');
 
     }
@@ -34,6 +37,7 @@ class Loan extends CI_Controller
         $this->load->view('import');
     }
 
+<<<<<<< HEAD
     /** Minimum rows per page for loan list screens. */
     private function loan_list_per_page()
     {
@@ -242,6 +246,8 @@ class Loan extends CI_Controller
         $this->load->view('admin/footer');
     }
 
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
     // Helper function to get customer name for activity logging
     private function get_customer_name_for_loan($loan_id) {
         $loan_details = get_by_id('loan', 'loan_id', $loan_id);
@@ -406,7 +412,11 @@ class Loan extends CI_Controller
         $branch_name = '';
         $branch_code = '';
         if (!empty($loan_row->branch)) {
+<<<<<<< HEAD
             $branch = get_branch_for_loan_value($loan_row->branch);
+=======
+            $branch = get_by_id('branches', 'id', $loan_row->branch);
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             if ($branch) {
                 $branch_name = strtoupper(trim((string)($branch->BranchName ?? '')));
                 $branch_code = strtoupper(trim((string)($branch->BranchCode ?? '')));
@@ -445,6 +455,7 @@ class Loan extends CI_Controller
         return null;
     }
 
+<<<<<<< HEAD
     /**
      * Attach late-charge totals used by loan balance summaries and schedule views.
      */
@@ -575,6 +586,8 @@ class Loan extends CI_Controller
         return date('Y-m-d H:i:s', $timestamp);
     }
 
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
     public function correct_loan(){
         $this->Loan_model->delete_replace_loans();
     }
@@ -872,7 +885,10 @@ class Loan extends CI_Controller
         $data['customers'] =$this->Individual_customers_model->get_all_active();
         $data['funds_sources'] = $this->Funds_source_model->get_all_funds_sources();
         $data['loan_types'] = $this->loan_products_for_current_user();
+<<<<<<< HEAD
         $data['branches'] = $this->branches_for_loan_forms();
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         $menu_toggle['toggles'] = 23;
         $this->load->view('admin/header', $menu_toggle);
         $this->load->view('loan/add_loan',$data);
@@ -882,7 +898,10 @@ class Loan extends CI_Controller
         $data['customers'] =$this->Groups_model->get_all_active();
         $data['funds_sources'] = $this->Funds_source_model->get_all_funds_sources();
         $data['loan_types'] = $this->loan_products_for_current_user();
+<<<<<<< HEAD
         $data['branches'] = $this->branches_for_loan_forms();
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         $menu_toggle['toggles'] = 23;
         $this->load->view('admin/header', $menu_toggle);
         $this->load->view('loan/add_loan_group',$data);
@@ -893,7 +912,10 @@ class Loan extends CI_Controller
         $data['customers'] = $this->Groups_model->get_all_active();
         $data['funds_sources'] = $this->Funds_source_model->get_all_funds_sources();
         $data['loan_types'] = $this->loan_products_for_current_user();
+<<<<<<< HEAD
         $data['branches'] = $this->branches_for_loan_forms();
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         
         // Generate batch number: BATCH + current date + random number
         $batch_number = 'BATCH' . date('Ymd') . rand(1000, 9999);
@@ -1027,6 +1049,7 @@ class Loan extends CI_Controller
             $loan_row->member_name = $member_name;
         }
         $data['batch'] = $batch;
+<<<<<<< HEAD
         $data['batch_summary'] = $this->Group_batch_model->build_financial_summary($data['loans']);
         $data['repayment_members'] = $this->Group_batch_model->build_repayment_member_rows($data['loans']);
         $data['pending_batch_edit'] = $this->Group_batch_model->get_pending_batch_edit($batch);
@@ -1051,6 +1074,9 @@ class Loan extends CI_Controller
             $data['officers'] = array();
         }
 
+=======
+        
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         // Check user permissions for batch actions
         $data['permissions'] = $this->get_user_batch_permissions();
         
@@ -1078,8 +1104,12 @@ class Loan extends CI_Controller
                 'can_pay' => $is_cashier_role,
                 'can_disburse' => false,
                 'can_recommend' => false,
+<<<<<<< HEAD
                 'can_approve' => false,
                 'can_edit' => false,
+=======
+                'can_approve' => false
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             );
         }
         
@@ -1095,8 +1125,12 @@ class Loan extends CI_Controller
                 'can_pay' => $is_cashier_role,
                 'can_disburse' => false,
                 'can_recommend' => false,
+<<<<<<< HEAD
                 'can_approve' => false,
                 'can_edit' => false,
+=======
+                'can_approve' => false
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             );
         }
         
@@ -1120,15 +1154,19 @@ class Loan extends CI_Controller
         }
         
         // Return permission flags
+<<<<<<< HEAD
         $can_edit = in_array('group_loan.recommend', $methods)
             || in_array('group_loan.approve', $methods)
             || $role_name === 'SUPER ADMIN';
 
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         return array(
             'can_pay_off' => in_array('group_loan.pay_off', $methods),
             'can_pay' => in_array('group_loan.pay', $methods) || $is_cashier_role,
             'can_disburse' => in_array('group_loan.disburse', $methods),
             'can_recommend' => in_array('group_loan.recommend', $methods),
+<<<<<<< HEAD
             'can_approve' => in_array('group_loan.approve', $methods),
             'can_edit' => $can_edit,
         );
@@ -1288,6 +1326,11 @@ class Loan extends CI_Controller
             redirect('loan/edit_approve');
         }
     }
+=======
+            'can_approve' => in_array('group_loan.approve', $methods)
+        );
+    }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
     
     public function batch_recommend(){
         header('Content-Type: application/json');
@@ -1466,6 +1509,7 @@ class Loan extends CI_Controller
             $disbursed_count = 0;
             $errors = [];
             
+<<<<<<< HEAD
             $disbursement_datetime = $this->resolve_disbursement_datetime();
             $transaction_date = date('Y-m-d', strtotime($disbursement_datetime));
 
@@ -1478,6 +1522,30 @@ class Loan extends CI_Controller
                     $this->pay_off_loan($loan->loan_id, $disbursement_datetime);
                     $this->Payement_schedules_model->correct_premature_loan_closure($loan->loan_id);
 
+=======
+            foreach($loans as $loan) {
+                try {
+                    // Process cash transaction (same as individual disbursement)
+                    $this->cash_transaction($loan->loan_id);
+                    
+                    // Process pay off loan (activates the loan and creates payment schedule)
+                    $this->pay_off_loan($loan->loan_id);
+                    
+                    $product = $this->Loan_products_model->get_by_id($loan->loan_product);
+                    $loan_is_masamba = $this->is_masamba_promotion_lingwe_blantyre($loan, $product);
+                    $disbursed_date = $loan_is_masamba
+                        ? date('Y-m-d 00:00:00', strtotime($loan->loan_date))
+                        : date('Y-m-d H:i:s');
+                    $update_data = array(
+                        'loan_status' => 'ACTIVE',
+                        'disbursed' => 'Yes',
+                        'disbursed_by' => $this->session->userdata('user_id'),
+                        'disbursed_date' => $disbursed_date
+                    );
+                    $this->Loan_model->update($loan->loan_id, $update_data);
+                    // pay_off_loan() already updates/aligns schedule dates during disbursement.
+                    
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                     // Check if the update was successful by verifying the database
                     $this->db->where('loan_id', $loan->loan_id);
                     $this->db->where('loan_status', 'ACTIVE');
@@ -1572,12 +1640,17 @@ class Loan extends CI_Controller
 
             $proof = date('Y-m-d H:i:s');
             if (!empty($input_datetime)) {
+<<<<<<< HEAD
                 if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $input_datetime)) {
                     $proof = $input_datetime . ' 00:00:00';
                 } else {
                     $datetime = new DateTime($input_datetime);
                     $proof = $datetime->format('Y-m-d H:i:s');
                 }
+=======
+                $datetime = new DateTime($input_datetime);
+                $proof = $datetime->format('Y-m-d H:i:s');
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             }
 
             $clean_allocations = [];
@@ -1619,7 +1692,11 @@ class Loan extends CI_Controller
             if (abs($allocation_sum - $total_amount) > 0.01) {
                 echo json_encode([
                     'success' => false,
+<<<<<<< HEAD
                     'message' => 'Allocated repayment amount must equal total deposited amount.',
+=======
+                    'message' => 'Total deposited amount must equal the sum of member allocations.',
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                     'expected_total' => $total_amount,
                     'allocation_total' => $allocation_sum
                 ]);
@@ -2273,6 +2350,7 @@ class Loan extends CI_Controller
 
     function create_act()
     {
+<<<<<<< HEAD
         $product_id = (int)$this->input->post('loan_type');
         $has_loan = $this->Loan_model->get_customer_open_loan_for_product(
             $this->input->post('customer'),
@@ -2286,6 +2364,14 @@ class Loan extends CI_Controller
                 redirect($_SERVER['HTTP_REFERER']);
                 return;
             }
+=======
+        $has_loan = $this->db->select("*")->from('loan')->where('loan_customer', $this->input->post('customer'))->where('customer_type', $this->input->post('customer_type'))->where('loan_status', 'ACTIVE')->get()->row();
+
+//print_r($exist);
+//print_r($has_loan);
+        if (!empty($has_loan)) {
+
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
             $this->db->select_sum('paid_amount');
             $this->db->where('loan_id', $has_loan->loan_id)->where('status', 'NOT PAID');
@@ -2294,6 +2380,7 @@ class Loan extends CI_Controller
             if ($this->input->post('amount') < $query->paid_amount) {
                 $this->toaster->error('Error, Sorry principal should be greater than curren ACTIVE loan balance for top up to pass through');
                 redirect($_SERVER['HTTP_REFERER']);
+<<<<<<< HEAD
                 return;
             }
         }
@@ -2303,6 +2390,12 @@ class Loan extends CI_Controller
             redirect($_SERVER['HTTP_REFERER']);
             return;
         }
+=======
+            }
+        }
+        $branch = get_by_id('employees','id', $this->input->post('user'));
+        $branch_id = get_by_id('branches','Code', $branch->BranchCode);
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         $id = $this->input->post('loan_type');
         $exist = $this->Loan_products_model->get_by_id($id);
         $productAccessErr = $this->validate_loan_product_access_for_user($exist);
@@ -2349,7 +2442,11 @@ class Loan extends CI_Controller
                 $this->input->post('worthness_file'),
                 $this->input->post('narration'),
                 $this->input->post('user'),
+<<<<<<< HEAD
                 $branch_id_value,
+=======
+                $branch_id->id,
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                 $this->input->post('funds_source')
             );
 
@@ -2489,6 +2586,7 @@ class Loan extends CI_Controller
             $member_ids = $this->input->post('member_ids');
             $member_amounts = $this->input->post('member_amounts');
             
+<<<<<<< HEAD
             $branch_id_value = $this->resolve_loan_branch_id_from_post();
             if (!$branch_id_value) {
                 ob_end_clean();
@@ -2497,6 +2595,19 @@ class Loan extends CI_Controller
                 return;
             }
 
+=======
+            // Get branch info from officer
+            $branch = get_by_id('employees','id', $user);
+            if (!$branch) {
+                throw new Exception('Invalid officer selected');
+            }
+            
+            $branch_id = get_by_id('branches','Code', $branch->BranchCode);
+            if (!$branch_id) {
+                throw new Exception('Branch not found for officer');
+            }
+            
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             // Validate inputs
             if (empty($member_ids) || empty($member_amounts)) {
                 ob_end_clean();
@@ -2543,17 +2654,31 @@ class Loan extends CI_Controller
                 }
                 
                 try {
+<<<<<<< HEAD
                     // One open loan per member per loan product (other products are allowed).
                     $has_loan = $this->Loan_model->get_customer_open_loan_for_product(
                         $member_id,
                         'individual',
                         $loan_type
                     );
+=======
+                    // Check if member already has an active loan
+                    $has_loan = $this->db->select("*")
+                        ->from('loan')
+                        ->where('loan_customer', $member_id)
+                        ->where('customer_type', 'individual')
+                        ->where('loan_status', 'ACTIVE')
+                        ->get()->row();
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
                     if (!empty($has_loan)) {
                         $failed_loans++;
                         $active_loan_skips++;
+<<<<<<< HEAD
                         $failure_details[] = 'Member ' . $member_id . ' already has open loan ' . $has_loan->loan_number . ' for this product';
+=======
+                        $failure_details[] = 'Member ' . $member_id . ' already has active loan ' . $has_loan->loan_number;
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                         continue;
                     }
 
@@ -2582,7 +2707,11 @@ class Loan extends CI_Controller
                         $worthness_file,           // worthiness file (same for all)
                         $narration,                // narration (same for all)
                         $user,                     // added by (same for all)
+<<<<<<< HEAD
                         $branch_id_value,            // branch (same for all)
+=======
+                        $branch_id->id,            // branch (same for all)
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                         $funds_source,             // funds source (same for all)
                         $batch_number,             // batch number (same for all)
                         'Yes',                     // from_group = Yes for group member loans
@@ -2620,7 +2749,11 @@ class Loan extends CI_Controller
                     $warning_parts[] = "{$duplicate_loans} already exist in this batch";
                 }
                 if ($active_loan_skips > 0) {
+<<<<<<< HEAD
                     $warning_parts[] = "{$active_loan_skips} already have an open loan for this product";
+=======
+                    $warning_parts[] = "{$active_loan_skips} have active individual loans";
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                 }
                 if ($empty_amount_skips > 0) {
                     $warning_parts[] = "{$empty_amount_skips} have no valid amount";
@@ -2644,7 +2777,11 @@ class Loan extends CI_Controller
                 if ($empty_amount_skips > 0 && $failed_loans == 0) {
                     $this->toaster->error('Error: No loans were created because no member had a valid amount.');
                 } elseif ($active_loan_skips > 0) {
+<<<<<<< HEAD
                     $this->toaster->error('Error: No loans were created because the selected members already have an open loan for this loan product.');
+=======
+                    $this->toaster->error('Error: No loans were created because the selected members already have active individual loans.');
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                 } elseif ($insert_failures > 0) {
                     $message = 'Error: No loans were created because insert failed.';
                     if (!empty($failure_details)) {
@@ -2684,7 +2821,11 @@ class Loan extends CI_Controller
         $selected_period_type = isset($data_new->period_type) ? $data_new->period_type : null;
         $this->Loan_model->add_loan_edit($row->id,$data_new->loan_principal, $data_new->loan_period, $data_new->sy_loan_product, $data_new->loan_date,$data_new->sy_loan_customer,$data_new->customer_type,$data_new->loan_worthness_file,$data_new->narration,$data_new->sy_added_by, $selected_period_type);
         $this->toaster->success('Success, loan edit was authorised  pending authorisation');
+<<<<<<< HEAD
         redirect('loan/edit_approve');
+=======
+        redirect('loan/track');
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
 
     }
@@ -2699,12 +2840,17 @@ class Loan extends CI_Controller
     function create_acti(){
 
         $group = $this->Groups_model->check($this->input->post('group_id'));
+<<<<<<< HEAD
         $branch_id_value = $this->resolve_loan_branch_id_from_post();
         if (!$branch_id_value) {
             $this->toaster->error('Error, please select a branch for this loan.');
             redirect($_SERVER['HTTP_REFERER']);
             return;
         }
+=======
+        $branch = get_by_id('employees','id', $this->input->post('user'));
+        $branch_id = get_by_id('branches','Code', $branch->BranchCode);
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
         $loanProductRow = $this->Loan_products_model->get_by_id($this->input->post('loan_type'));
         $productAccessErr = $this->validate_loan_product_access_for_user($loanProductRow);
@@ -2721,6 +2867,7 @@ class Loan extends CI_Controller
             return;
         }
 
+<<<<<<< HEAD
         $existing_product_loan = $this->Loan_model->get_customer_open_loan_for_product(
             $this->input->post('customer'),
             null,
@@ -2732,6 +2879,8 @@ class Loan extends CI_Controller
             return;
         }
 
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         if(!empty($group)){
             $user_gotten = $this->Group_loan_tracker_model->validate($this->input->post('group_id'),$this->input->post('customer'),$group->id);
             if(!empty($user_gotten)){
@@ -2744,6 +2893,7 @@ class Loan extends CI_Controller
                     redirect($_SERVER['HTTP_REFERER']);
                 }else{
 
+<<<<<<< HEAD
                     $result = $this->Loan_model->add_loan(
                         $this->input->post('amount'),
                         $this->input->post('months'),
@@ -2757,6 +2907,9 @@ class Loan extends CI_Controller
                         $branch_id_value,
                         $this->input->post('funds_source')
                     );
+=======
+                    $result = $this->Loan_model->add_loan($this->input->post('amount'), $this->input->post('months'), $this->input->post('loan_type'), $this->input->post('loan_date'),$this->input->post('customer'),$this->input->post('worthness_file'),$this->input->post('narration'),$this->input->post('user'), $branch_id->id);
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                     $data['result'] = $result;
                     $this->toaster->success('Success, customer was created  pending authorisation');
                     $data = array(
@@ -2782,9 +2935,17 @@ class Loan extends CI_Controller
 
     }
     function initiated(){
+<<<<<<< HEAD
         $this->load_paginated_loan_list('loan/loan_list', $this->loan_list_page_options('initiated', array(
             'default_status' => 'RECOMMENDED',
         )));
+=======
+        $data['loan_data'] = $this->Loan_model->get_all('RECOMMENDED');
+        $menu_toggle['toggles'] = 23;
+        $this->load->view('admin/header', $menu_toggle);
+        $this->load->view('loan/loan_list', $data);
+        $this->load->view('admin/footer');
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
     }
     public function transaction_reversal()
     {
@@ -2873,6 +3034,7 @@ class Loan extends CI_Controller
         $this->load->view('admin/footer');
     }
     function recommend(){
+<<<<<<< HEAD
         $this->load_paginated_loan_list('loan/recommend', $this->loan_list_page_options('recommend', array(
             'default_status' => 'INITIATED',
         )));
@@ -2887,12 +3049,35 @@ class Loan extends CI_Controller
         $this->load_paginated_loan_list('loan/restructure', $options);
     }
     function track(){
+=======
+        $data['loan_data'] = $this->Loan_model->get_all('INITIATED');
+        $menu_toggle['toggles'] = 23;
+        $this->load->view('admin/header', $menu_toggle);
+        $this->load->view('loan/recommend', $data);
+        $this->load->view('admin/footer');
+    }
+    function restructure(){
+        $batch = $this->input->get('batch');
+        $data['loan_data'] = $this->Loan_model->get_all('', $batch);
+        $data['batch_filter'] = $batch;
+        $menu_toggle['toggles'] = 23;
+        $this->load->view('admin/header', $menu_toggle);
+        $this->load->view('loan/restructure', $data);
+        $this->load->view('admin/footer');
+    }
+    function track(){
+        $data['loan_data'] = $this->Loan_model->get_all('');
+        $menu_toggle['toggles'] = 23;
+
+
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         $user = $this->input->get('user');
         $branch = $this->input->get('branch');
         $product = $this->input->get('product');
         $status = $this->input->get('status');
         $from = $this->input->get('from');
         $to = $this->input->get('to');
+<<<<<<< HEAD
         $loan_number = trim((string) $this->input->get('loan_number'));
         $search = $this->input->get('search');
         $branchgp = ($branch == 7042) ? 7 : 6;
@@ -2998,6 +3183,126 @@ class Loan extends CI_Controller
             'default_status' => 'DELETED',
             'exclude_deleted' => false,
         )));
+=======
+        $search = $this->input->get('search');
+        if($branch==7042){
+
+            $branchgp=7;
+        }
+        else{
+            $branchgp=6;
+        }
+
+        if($search=="filter"){
+            $data['loan_data'] = $this->Loan_model->get_filter($user,$branch,$branchgp,$product,$status,$from,$to);
+            $this->load->view('admin/header', $menu_toggle);
+            $this->load->view('loan/track', $data);
+            $this->load->view('admin/footer');
+        }elseif($search=='export pdf'){
+            $data['loan_data'] = $this->Loan_model->get_filter($user,$branch,$branchgp,$product,$status,$from,$to);
+            $data['officer'] = ($user=="All") ? "All Officers" : get_by_id('employees','id',$user)->Firstname;
+            $data['product'] =($product=="All") ? "All Products" : get_by_id('loan_products','loan_product_id',$product)->product_name;
+            $data['from'] = $from;
+            $data['to'] = $to;
+            $this->load->library('Pdf');
+            $html = $this->load->view('loan/loan_report_pdf', $data,true);
+            $this->pdf->createPDF($html, "loan report as on".date('Y-m-d'), true,'A4','landscape');
+        } elseif($search=='export excel'){
+            $data_excel = $this->Loan_model->get_filter($user,$branch,$branchgp,$product,$status,$from,$to);
+            $this->excel($data_excel);
+        }else{
+            $this->load->view('admin/header', $menu_toggle);
+            $this->load->view('loan/track', $data);
+            $this->load->view('admin/footer');
+        }
+
+    }
+    function individual_track(){
+        $idd=$this->session->userdata('user_id');
+        $data['loan_data'] = $this->Loan_model->track_individual($idd);
+        $menu_toggle['toggles'] = 23;
+        $this->load->view('admin/header', $menu_toggle);
+        $this->load->view('loan/track', $data);
+        $this->load->view('admin/footer');
+    }
+    function loan_repayment(){
+        $data['loan_data'] = $this->Loan_model->get_all('ACTIVE');
+        $menu_toggle['toggles'] = 52;
+        $this->load->view('admin/header', $menu_toggle);
+        $this->load->view('loan/loan_repayment', $data);
+        $this->load->view('admin/footer');
+    }
+    function loan_repayment_pay_off(){
+        $data['loan_data'] = $this->Loan_model->get_all('ACTIVE');
+        $menu_toggle['toggles'] = 52;
+        $this->load->view('admin/header', $menu_toggle);
+        $this->load->view('loan/loan_repayment_pay_off', $data);
+        $this->load->view('admin/footer');
+    }
+    function assign(){
+        $data['loan_data'] = $this->Loan_model->get_all('');
+        $menu_toggle['toggles'] = 23;
+        $this->load->view('admin/header', $menu_toggle);
+        $this->load->view('loan/active', $data);
+        $this->load->view('admin/footer');
+    }
+    function closed(){
+        $data['loan_data'] = $this->Loan_model->get_all('CLOSED');
+        $menu_toggle['toggles'] = 23;
+        $this->load->view('admin/header', $menu_toggle);
+        $this->load->view('loan/closed', $data);
+        $this->load->view('admin/footer');
+    }
+
+    function approved(){
+        $data['loan_data'] = $this->Loan_model->get_all('APPROVED');
+        $menu_toggle['toggles'] = 23;
+        $this->load->view('admin/header', $menu_toggle);
+        $this->load->view('loan/approved', $data);
+        $this->load->view('admin/footer');
+    }
+    function disbursed(){
+        $data['loan_data'] = $this->Loan_model->get_disbursed();
+        $menu_toggle['toggles'] = 23;
+        $this->load->view('admin/header', $menu_toggle);
+        $this->load->view('loan/active_loans', $data);
+        $this->load->view('admin/footer');
+    }
+    function write_off(){
+        $data['loan_data'] = $this->Loan_model->get_all('ACTIVE');
+        $menu_toggle['toggles'] = 23;
+        $this->load->view('admin/header', $menu_toggle);
+        $this->load->view('loan/write_off', $data);
+        $this->load->view('admin/footer');
+    }
+    function rejected(){
+        $data['loan_data'] = $this->Loan_model->get_all('REJECTED');
+        $this->load->view('admin/header');
+        $this->load->view('loan/approved', $data);
+        $this->load->view('admin/footer');
+    }
+    function written_off(){
+        $data['loan_data'] = $this->Loan_model->get_all('WRITTEN_OFF');
+        $menu_toggle['toggles'] = 23;
+        $this->load->view('admin/header', $menu_toggle);
+        $this->load->view('loan/written_off', $data);
+        $this->load->view('admin/footer');
+    }
+    function write_off_approve(){
+        $data['loan_data'] = $this->Loan_model->get_all_mod('ACTIVE');
+        $menu_toggle['toggles'] = 23;
+        $this->load->view('admin/header', $menu_toggle);
+        $this->load->view('loan/write_off_approval', $data);
+        $this->load->view('admin/footer');
+    }
+
+    function delete_permanent(){
+        $data['loan_data'] = $this->Loan_model->get_all('');
+        $menu_toggle['toggles'] = 23;
+        $this->load->view('admin/header', $menu_toggle);
+        $this->load->view('loan/delete_p', $data);
+        $this->load->view('admin/footer');
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
     }
     public function pay_advance(){
         $loan_number = $this->input->post('loan_id');
@@ -3160,6 +3465,7 @@ class Loan extends CI_Controller
     }
     function nullify_schedules($loan_id,$middle, $totalbalance)
     {
+<<<<<<< HEAD
         $loan_id = (int) $loan_id;
         $middle = (int) $middle;
 
@@ -3189,6 +3495,14 @@ class Loan extends CI_Controller
             'paid_off' => 'YES',
             'loan_status' => 'CLOSED',
         ));
+=======
+        $this->db->where('loan_id',$loan_id)
+            ->where('payment_number',$middle)->update('payement_schedules',array('paid_amount'=>$totalbalance,'loan_balance'=>0,'partial_paid'=>'NO','status'=>'PAID'));
+        $this->db->where('loan_id',$loan_id)
+            ->where('payment_number >',$middle)
+            ->update('payement_schedules',array('amount'=>0,'principal'=>0,'interest'=>0,'padmin_fee'=>0,'ploan_cover'=>0,'paid_amount'=>0,'loan_balance'=>0,'partial_paid'=>'NO','status'=>'PAID'));
+        $this->db->where('loan_id',$loan_id)->update('loan',array('loan_status'=>'CLOSED'));
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
     }
     function finish_loan_backup(){
         $tid="TR-S".rand(100,9999).date('Y').date('m').date('d');
@@ -3726,8 +4040,23 @@ class Loan extends CI_Controller
     function view($id){
         $row = $this->Loan_model->get_by_id($id);
         $payments = $this->Payement_schedules_model->get_all_by_id($row->loan_id);
+<<<<<<< HEAD
         $payments = $this->enrich_loan_payments_for_display($payments);
         $payment_balance = $this->build_loan_payment_balance_summary($payments, $row);
+=======
+
+        // Load late charges model
+        $this->load->model('Late_charges_model');
+
+        // Add late charges data to each payment schedule
+        foreach ($payments as &$payment) {
+            // Get late charge for this payment schedule (default to 0 if not set)
+            $payment->total_late_charge = isset($payment->total_late_charge) ? $payment->total_late_charge : 0;
+
+            // Calculate total pay amount including late charges
+            $payment->total_pay_amount = $payment->amount + $payment->total_late_charge;
+        }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
         if($row->customer_type=='group'){
             $group = $this->Groups_model->get_by_id($row->loan_customer);
@@ -3766,8 +4095,12 @@ class Loan extends CI_Controller
             'loan_status' => $row->loan_status,
             'officer' => $row->Firstname." ".$row->Lastname,
             'loan_added_date' => $row->loan_added_date,
+<<<<<<< HEAD
             'payments'=>$payments,
             'payment_balance' => $payment_balance,
+=======
+            'payments'=>$payments
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         );
         $menu_toggle['toggles'] = 23;
         $this->load->view('admin/header', $menu_toggle);
@@ -4158,8 +4491,11 @@ class Loan extends CI_Controller
     function repayment_view($id){
         $row = $this->Loan_model->get_by_id($id);
         $payments = $this->Payement_schedules_model->get_all_by_id($row->loan_id);
+<<<<<<< HEAD
         $payments = $this->enrich_loan_payments_for_display($payments);
         $payment_balance = $this->build_loan_payment_balance_summary($payments, $row);
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
         if($row->customer_type=='group'){
             $group = $this->Groups_model->get_by_id($row->loan_customer);
@@ -4196,7 +4532,10 @@ class Loan extends CI_Controller
             'loan_status' => $row->loan_status,
             'loan_added_date' => $row->loan_added_date,
             'payments'=>$payments,
+<<<<<<< HEAD
             'payment_balance' => $payment_balance,
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             'officer'=>$row->Firstname.' '.$row->Lastname
         );
         $menu_toggle['toggles'] = 52;
@@ -4207,8 +4546,11 @@ class Loan extends CI_Controller
     function repayment_view_pay_off($id){
         $row = $this->Loan_model->get_by_id($id);
         $payments = $this->Payement_schedules_model->get_all_by_id($row->loan_id);
+<<<<<<< HEAD
         $payments = $this->enrich_loan_payments_for_display($payments);
         $payment_balance = $this->build_loan_payment_balance_summary($payments, $row);
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
         if($row->customer_type=='group'){
             $group = $this->Groups_model->get_by_id($row->loan_customer);
@@ -4245,7 +4587,10 @@ class Loan extends CI_Controller
             'loan_status' => $row->loan_status,
             'loan_added_date' => $row->loan_added_date,
             'payments'=>$payments,
+<<<<<<< HEAD
             'payment_balance' => $payment_balance,
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             'officer'=>$row->Firstname.' '.$row->Lastname
         );
         $menu_toggle['toggles'] = 52;
@@ -4255,6 +4600,7 @@ class Loan extends CI_Controller
     }
 
 
+<<<<<<< HEAD
     /**
      * Build report/statement view data for one loan (same layout as loan/report).
      */
@@ -4291,6 +4637,31 @@ class Loan extends CI_Controller
             'maturity_pay' => $maturity_date ? $maturity_date->amount : 0,
             'first_payment' => $first_payment ? $first_payment->amount : 0,
             'first_payment_date' => $first_payment ? $first_payment->payment_schedule : 'N/A',
+=======
+    function report($id){
+        $row = $this->Loan_model->get_by_id_r($id);
+        $payments = $this->Payement_schedules_model->get_all_by_id($row->loan_id);
+        $maturity_date = $this->Payement_schedules_model->get_last_payment($row->loan_id);
+        $first_payment = $this->Payement_schedules_model->get_first_payment($row->loan_id);
+        if($row->customer_type=='group'){
+            $group = $this->Groups_model->get_by_id($row->loan_customer);
+
+            $customer_name = $group->group_name.'('.$group->group_code.')';
+
+        }elseif($row->customer_type=='individual'){
+            $indi = $this->Individual_customers_model->get_by_id($row->loan_customer);
+            $customer_name = $indi->Firstname.' '.$indi->Lastname;
+
+        }
+        $branchname = get_by_id('branches','id',$row->branch);
+        $bname = $branchname ? $branchname->BranchName : 'N/A';
+        $data = array(
+            'loan_id' => $row->loan_id,
+            'maturity_date' => $maturity_date->payment_schedule,
+            'maturity_pay' => $maturity_date->amount,
+            'first_payment' => $first_payment->amount,
+            'first_payment_date' => $first_payment->payment_schedule,
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             'loan_number' => $row->loan_number,
             'loan_product' => $row->product_name,
             'branch_name' => $bname,
@@ -4308,6 +4679,7 @@ class Loan extends CI_Controller
             'loan_approved_by' => $row->loan_approved_by,
             'loan_status' => $row->loan_status,
             'loan_added_date' => $row->loan_added_date,
+<<<<<<< HEAD
             'officer' => trim($row->efname . ' ' . $row->elname),
             'payments' => $payments,
             'product_name' => $row->product_name,
@@ -4583,6 +4955,18 @@ class Loan extends CI_Controller
         return $rows;
     }
 
+=======
+            'officer' => $row->efname." ".$row->elname,
+            'payments'=>$payments,
+            'product_name'=>$row->product_name,
+        );
+        $this->load->library('Pdf');
+        $html = $this->load->view('loan/report', $data,true);
+        $this->pdf->createPDF($html, $data['loan_customer']." loan report as on ".date('Y-m-d'), true);
+
+
+    }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
     
     function batch_report($batch){
         // Get all loans for this batch with group info
@@ -4627,7 +5011,11 @@ class Loan extends CI_Controller
                 $customer_name = $indi->Firstname.' '.$indi->Lastname;
             }
 
+<<<<<<< HEAD
             $branchname = get_branch_for_loan_value($loan->branch);
+=======
+            $branchname = get_by_id('branches','id',$loan->branch);
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             $bname = $branchname ? $branchname->BranchName : 'N/A';
 
             $loan_obj = (object) array(
@@ -4676,7 +5064,11 @@ class Loan extends CI_Controller
             'group_code' => $batch_group_code,
             'total_loans' => count($loans),
             'total_amount' => array_sum(array_column($batch_data, 'loan_principal')),
+<<<<<<< HEAD
             'branch_name' => !empty($loans) && !empty($loans[0]->branch) ? (($b = get_branch_for_loan_value($loans[0]->branch)) ? $b->BranchName : 'N/A') : 'N/A'
+=======
+            'branch_name' => !empty($loans) && !empty($loans[0]->branch) ? (get_by_id('branches','id',$loans[0]->branch) ? get_by_id('branches','id',$loans[0]->branch)->BranchName : 'N/A') : 'N/A'
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         );
 
         $this->load->library('Pdf');
@@ -4688,6 +5080,7 @@ class Loan extends CI_Controller
         $this->load->view('testv');
     }
     function approval_action(){
+<<<<<<< HEAD
         $action = $this->input->post('action');
         if ($action === null || $action === '') {
             $action = $this->input->get('action');
@@ -4696,6 +5089,10 @@ class Loan extends CI_Controller
         if ($id === null || $id === '') {
             $id = $this->input->get('id');
         }
+=======
+        $action = $this->input->get('action');
+        $id= $this->input->get('id');
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         $customer = $this->Loan_model->loan_user($id);
         $by = 'loan_approved_by';
         $by_date = 'approved_date';
@@ -4723,11 +5120,16 @@ class Loan extends CI_Controller
             $by = 'disbursed_by';
             $by_date = 'disbursed_date';
 
+<<<<<<< HEAD
             $disbursement_datetime = $this->resolve_disbursement_datetime();
             $transaction_date = date('Y-m-d', strtotime($disbursement_datetime));
             $this->cash_transaction($id, $transaction_date);
             $this->pay_off_loan($id, $disbursement_datetime);
             $this->Payement_schedules_model->correct_premature_loan_closure($id);
+=======
+            $this->cash_transaction($id);
+            $this->pay_off_loan($id);
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         }else{
             $this->Loan_model->update($id,array('loan_status'=>$action,$by=>$this->session->userdata('user_id'),$by_date =>date('Y-m-d H:i:s')));
         }
@@ -4735,7 +5137,11 @@ class Loan extends CI_Controller
             send_sms($customer->PhoneNumber,'Dear customer, loan has been approved, you can call numbers below for more');
         }
         $this->toaster->success('Success, your action successful');
+<<<<<<< HEAD
         $this->redirect_after_approval_action($action);
+=======
+        redirect($_SERVER['HTTP_REFERER']);
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
     }
     public function getMedianSchedule($totalSchedules) {
         // Validate that totalSchedules is an integer
@@ -4752,6 +5158,7 @@ class Loan extends CI_Controller
 
         return (int)$medianScheduleIndex;
     }
+<<<<<<< HEAD
     public function pay_off_loan($loan_id, $disbursement_date = null){
         $exist = $this->db->select("*")->from('loan')->where('loan_id',$loan_id)->get()->row();
         if (!$exist) {
@@ -4773,6 +5180,24 @@ class Loan extends CI_Controller
         $action = "ACTIVE";
         $disbursed_dt = $this->resolve_disbursement_datetime($disbursement_date);
         $effective_loan_date = date('Y-m-d', strtotime($disbursed_dt));
+=======
+    public function pay_off_loan($loan_id){
+        $exist = $this->db->select("*")->from('loan')->where('loan_id',$loan_id)->get()->row();
+        $has_loan = $this->db->select("*")->from('loan')->where('loan_customer',$exist->loan_customer)->where('loan_status','ACTIVE')->get()->row();
+        $by = 'disbursed_by';
+        $by_date = 'disbursed_date';
+        $action = "ACTIVE";
+//print_r($exist);
+//print_r($has_loan);
+        $product = $this->Loan_products_model->get_by_id($exist->loan_product);
+        $loan_is_masamba = $this->is_masamba_promotion_lingwe_blantyre($exist, $product);
+        $effective_loan_date = $loan_is_masamba
+            ? date('Y-m-d', strtotime($exist->loan_date))
+            : date('Y-m-d');
+        $disbursed_dt = $loan_is_masamba
+            ? date('Y-m-d 00:00:00', strtotime($effective_loan_date))
+            : date('Y-m-d H:i:s');
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         if(empty($has_loan)){
             $this->Loan_model->update($loan_id,array('loan_status'=>$action,'disbursed'=>'Yes',$by=>$this->session->userdata('user_id'),$by_date =>$disbursed_dt,'loan_date' => $effective_loan_date));
             $this->Loan_model->add_loan_rerun(
@@ -4786,7 +5211,10 @@ class Loan extends CI_Controller
                 $loan_id
             );
             $this->db->where('loan_id', $loan_id)->update('payement_schedules', array('loan_date' => $effective_loan_date));
+<<<<<<< HEAD
             $this->Payement_schedules_model->correct_premature_loan_closure($loan_id);
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         }
         else {
 
@@ -4848,7 +5276,10 @@ class Loan extends CI_Controller
 
             if (empty($get_account)) {
                 log_message('error', 'pay_off_loan: No teller account found for user ' . $this->session->userdata('user_id'));
+<<<<<<< HEAD
                 $this->Payement_schedules_model->correct_premature_loan_closure($loan_id);
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                 return;
             }
 
@@ -4877,31 +5308,49 @@ class Loan extends CI_Controller
                         );
                         log_activity($logger);
                         $this->nullify_schedules($has_loan->loan_id, $middlepayment, $totalbalance);
+<<<<<<< HEAD
                         $this->Payement_schedules_model->correct_premature_loan_closure($loan_id);
                         return true;
                     } else {
                         $this->Payement_schedules_model->correct_premature_loan_closure($loan_id);
+=======
+                        $this->db->where('loan_id', $has_loan->loan_id)->update('loan',array('paid_off'=>"YES"));
+                        return true;
+                    } else {
+
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                         return false;
                     }
                 } else {
 
                     $this->toaster->error('Error!, balance not enough for payment');
+<<<<<<< HEAD
                     $this->Payement_schedules_model->correct_premature_loan_closure($loan_id);
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                     return false;
                 }
             } else {
                 $this->toaster->error('Error!, deposit module failed');
 
+<<<<<<< HEAD
                 $this->Payement_schedules_model->correct_premature_loan_closure($loan_id);
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                 return false;
             }
 
 
         }
 
+<<<<<<< HEAD
         $this->Payement_schedules_model->correct_premature_loan_closure($loan_id);
     }
     public function cash_transaction($loan_id, $transaction_date = null){
+=======
+    }
+    public function cash_transaction($loan_id){
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         $tid="TR-S".rand(100,9999).date('Y').date('m').date('d');
         $result = array();
         $get_account = $this->Tellering_model->get_teller_account1();
@@ -4913,8 +5362,12 @@ class Loan extends CI_Controller
         $account = $get_l->loan_number;
         $amount = $charge_value;
         $mode = 'deposit';
+<<<<<<< HEAD
         $txn_date = $transaction_date ? date('Y-m-d', strtotime($transaction_date)) : date('Y-m-d');
         $res =	$this->Account_model->cash_transaction($teller_account,$account,$amount,$mode,$tid,$txn_date);
+=======
+        $res =	$this->Account_model->cash_transaction($teller_account,$account,$amount,$mode,$tid,date('Y-m-d'));
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         if($res=='success'){
             $result['status']= 'success';
 
@@ -5463,9 +5916,19 @@ class Loan extends CI_Controller
 
     function initiate_edit_loan()
     {
+<<<<<<< HEAD
         $this->load_paginated_loan_list('loan/initiate_edit_loan', $this->loan_list_page_options('initiate_edit_loan', array(
             'default_status' => 'All',
         )));
+=======
+        $data['loan_data'] = $this->Loan_model->get_all('');
+        $menu_toggle['toggles'] = 23;
+
+        $this->load->view('admin/header', $menu_toggle);
+        $this->load->view('loan/initiate_edit_loan', $data);
+        $this->load->view('admin/footer');
+
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
     }
 
     public function excel($edata)

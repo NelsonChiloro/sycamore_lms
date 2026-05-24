@@ -312,7 +312,14 @@ class Payement_schedules_model extends CI_Model
                 $this->db->where('loan_id', $loan_number)
                          ->update('loan', ['next_payment_id' => $pay_number + 1]);
 
+<<<<<<< HEAD
                 $this->_should_close_loan($loan_number, $pay_number);
+=======
+                if ($this->_should_close_loan($loan_number, $pay_number)) {
+                    $this->db->where('loan_id', $loan_number)
+                             ->update('loan', ['loan_status' => 'CLOSED']);
+                }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             } else {
                 $update_data['partial_paid'] = 'YES';
             }
@@ -422,7 +429,14 @@ class Payement_schedules_model extends CI_Model
                 $this->db->where('loan_id', $loan_number)
                     ->update('loan', array('next_payment_id' => ((int)$schedule->payment_number) + 1));
 
+<<<<<<< HEAD
                 $this->_should_close_loan($loan_number, (int)$schedule->payment_number);
+=======
+                if ($this->_should_close_loan($loan_number, (int)$schedule->payment_number)) {
+                    $this->db->where('loan_id', $loan_number)
+                        ->update('loan', array('loan_status' => 'CLOSED'));
+                }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             }
 
             $transaction = array(
@@ -458,8 +472,11 @@ class Payement_schedules_model extends CI_Model
 	function get_all_by_id($id)
 	{
         $this->normalize_schedule_payment_allocation($id);
+<<<<<<< HEAD
         $this->recalculate_loan_balances($id);
         $this->correct_premature_loan_closure($id);
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 		$this->db->select('*');
 		$this->db->order_by($this->id, $this->order);
 		$this->db->join('loan','loan.loan_id = payement_schedules.loan_id');
@@ -559,7 +576,13 @@ class Payement_schedules_model extends CI_Model
                     $this->db->where('payment_number', $lr->payment_number);
                     $this->db->update($this->table,$data);
                     $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$lr->payment_number+1));
+<<<<<<< HEAD
                     $this->_should_close_loan($loan_number, $lr->payment_number);
+=======
+                    if($this->_should_close_loan($loan_number, $lr->payment_number)){
+                        $this->db->where('loan_id', $loan_number)->update('loan',array('loan_status'=>'CLOSED'));
+                    }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                     $transaction = array(
                         'ref' => $tid,
                         'loan_id' => $loan_number,
@@ -586,7 +609,13 @@ class Payement_schedules_model extends CI_Model
                     $this->db->where('payment_number', $lr->payment_number);
                     $this->db->update($this->table,$data);
                     $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$lr->payment_number+1));
+<<<<<<< HEAD
                     $this->_should_close_loan($loan_number, $lr->payment_number);
+=======
+                    if($this->_should_close_loan($loan_number, $lr->payment_number)){
+                        $this->db->where('loan_id', $loan_number)->update('loan',array('loan_status'=>'CLOSED'));
+                    }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                     $transaction = array(
                         'ref' => $tid,
                         'loan_id' => $loan_number,
@@ -621,7 +650,13 @@ class Payement_schedules_model extends CI_Model
             $this->db->where('payment_number', $pay_number);
             $this->db->update($this->table,$data);
             $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$pay_number+1));
+<<<<<<< HEAD
             $this->_should_close_loan($loan_number, $pay_number);
+=======
+            if($this->_should_close_loan($loan_number, $pay_number)){
+                $this->db->where('loan_id', $loan_number)->update('loan',array('loan_status'=>'CLOSED'));
+            }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             $transaction = array(
                 'ref' => $tid,
                 'loan_id' => $loan_number,
@@ -734,7 +769,13 @@ class Payement_schedules_model extends CI_Model
                     $this->db->where('payment_number', $lr->payment_number);
                     $this->db->update($this->table,$data);
                     $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$lr->payment_number+1));
+<<<<<<< HEAD
                     $this->_should_close_loan($loan_number, $lr->payment_number);
+=======
+                    if($this->_should_close_loan($loan_number, $lr->payment_number)){
+                        $this->db->where('loan_id', $loan_number)->update('loan',array('loan_status'=>'CLOSED'));
+                    }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                     $transaction = array(
                         'ref' => $tid,
                         'loan_id' => $loan_number,
@@ -761,7 +802,13 @@ class Payement_schedules_model extends CI_Model
                     $this->db->where('payment_number', $lr->payment_number);
                     $this->db->update($this->table,$data);
                     $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$lr->payment_number+1));
+<<<<<<< HEAD
                     $this->_should_close_loan($loan_number, $lr->payment_number);
+=======
+                    if($this->_should_close_loan($loan_number, $lr->payment_number)){
+                        $this->db->where('loan_id', $loan_number)->update('loan',array('loan_status'=>'CLOSED'));
+                    }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                     $transaction = array(
                         'ref' => $tid,
                         'loan_id' => $loan_number,
@@ -796,7 +843,13 @@ class Payement_schedules_model extends CI_Model
             $this->db->where('payment_number', $pay_number);
             $this->db->update($this->table,$data);
             $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$pay_number+1));
+<<<<<<< HEAD
             $this->_should_close_loan($loan_number, $pay_number);
+=======
+            if($this->_should_close_loan($loan_number, $pay_number)){
+                $this->db->where('loan_id', $loan_number)->update('loan',array('loan_status'=>'CLOSED'));
+            }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             $transaction = array(
                 'ref' => $tid,
                 'loan_id' => $loan_number,
@@ -823,6 +876,7 @@ class Payement_schedules_model extends CI_Model
 		$this->db->where('payement_schedules.loan_id',$id);
 		return $this->db->get($this->table)->row();
 	}
+<<<<<<< HEAD
 
 	/**
 	 * Build consistent loan balance figures from repayment schedules.
@@ -873,6 +927,8 @@ class Payement_schedules_model extends CI_Model
 			'totals_mismatch' => ($stored_total > 0 && $total_scheduled > 0 && abs($stored_total - $total_scheduled) >= 0.02),
 		);
 	}
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 	function edits()
 	{
 		$this->db->select('*');
@@ -974,7 +1030,13 @@ $tid = "ST." . date('Y') . date('m') . date('d') . '.' . rand(100, 999);
             $this->db->where('payment_number', $lr->payment_number);
             $this->db->update($this->table, $data);
             $this->db->where('loan_id', $loan_number)->update('loan', array('next_payment_id' => $pay_number));
+<<<<<<< HEAD
             $this->_should_close_loan($loan_number, $lr->payment_number);
+=======
+            if ($this->_should_close_loan($loan_number, $lr->payment_number)) {
+                $this->db->where('loan_id', $loan_number)->update('loan', array('loan_status' => 'CLOSED'));
+            }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
             $transaction = array(
                 'ref' => $tid,
@@ -1088,7 +1150,13 @@ $tid = "ST." . date('Y') . date('m') . date('d') . '.' . rand(100, 999);
                     $this->db->where('payment_number', $lr->payment_number);
                     $this->db->update($this->table,$data);
                     $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$lr->payment_number+1));
+<<<<<<< HEAD
                     $this->_should_close_loan($loan_number, $lr->payment_number);
+=======
+                    if($this->_should_close_loan($loan_number, $lr->payment_number)){
+                        $this->db->where('loan_id', $loan_number)->update('loan',array('loan_status'=>'CLOSED'));
+                    }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                     $transaction = array(
                         'ref' => "GF.".date('Y').date('m').date('d').'.'.rand(100,999),
                         'loan_id' => $loan_number,
@@ -1115,7 +1183,13 @@ $tid = "ST." . date('Y') . date('m') . date('d') . '.' . rand(100, 999);
                     $this->db->where('payment_number', $lr->payment_number);
                     $this->db->update($this->table,$data);
                     $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$lr->payment_number+1));
+<<<<<<< HEAD
                     $this->_should_close_loan($loan_number, $lr->payment_number);
+=======
+                    if($this->_should_close_loan($loan_number, $lr->payment_number)){
+                        $this->db->where('loan_id', $loan_number)->update('loan',array('loan_status'=>'CLOSED'));
+                    }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                     $transaction = array(
                         'ref' => "GF.".date('Y').date('m').date('d').'.'.rand(100,999),
                         'loan_id' => $loan_number,
@@ -1150,7 +1224,13 @@ $tid = "ST." . date('Y') . date('m') . date('d') . '.' . rand(100, 999);
             $this->db->where('payment_number', $pay_number);
             $this->db->update($this->table,$data);
             $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$pay_number+1));
+<<<<<<< HEAD
             $this->_should_close_loan($loan_number, $pay_number);
+=======
+            if($this->_should_close_loan($loan_number, $pay_number)){
+                $this->db->where('loan_id', $loan_number)->update('loan',array('loan_status'=>'CLOSED'));
+            }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             $transaction = array(
                 'ref' => "GF.".date('Y').date('m').date('d').'.'.rand(100,999),
                 'loan_id' => $loan_number,
@@ -1317,7 +1397,13 @@ $tid = "ST." . date('Y') . date('m') . date('d') . '.' . rand(100, 999);
             $this->db->where('payment_number', $pay_number);
             $this->db->update($this->table,$data);
             $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$pay_number+1));
+<<<<<<< HEAD
                 $this->_should_close_loan($loan_number, $pay_number);
+=======
+                if($this->_should_close_loan($loan_number, $pay_number)){
+                    $this->db->where('loan_id', $loan_number)->update('loan',array('loan_status'=>'CLOSED'));
+                }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             $transaction = array(
                 'ref' => "GF.".date('Y').date('m').date('d').'.'.rand(100,999),
                 'loan_id' => $loan_number,
@@ -1353,7 +1439,13 @@ $tid = "ST." . date('Y') . date('m') . date('d') . '.' . rand(100, 999);
             $this->db->where('payment_number', $pay_number);
             $this->db->update($this->table,$data);
             $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$pay_number+1));
+<<<<<<< HEAD
             $this->_should_close_loan($loan_number, $pay_number);
+=======
+            if($this->_should_close_loan($loan_number, $pay_number)){
+                $this->db->where('loan_id', $loan_number)->update('loan',array('loan_status'=>'CLOSED'));
+            }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             $transaction = array(
                 'ref' => "GF.".date('Y').date('m').date('d').'.'.rand(100,999),
                 'loan_id' => $loan_number,
@@ -1466,6 +1558,7 @@ $tid = "ST." . date('Y') . date('m') . date('d') . '.' . rand(100, 999);
     }
 
     /**
+<<<<<<< HEAD
      * Recalculate loan_balance for all schedules based on principal actually paid to date.
      */
     public function recalculate_loan_balances($loan_id) {
@@ -1508,10 +1601,24 @@ $tid = "ST." . date('Y') . date('m') . date('d') . '.' . rand(100, 999);
             if ($computed_total > 0 && abs($stored_total - $computed_total) < 1) {
                 $this->db->where('loan_id', $loan_id)->update('loan', array('loan_amount_total' => $computed_total));
             }
+=======
+     * Recalculate loan_balance for all schedules after reversal/edit to fix amortization display
+     */
+    public function recalculate_loan_balances($loan_id) {
+        $loan = $this->db->where('loan_id', $loan_id)->get('loan')->row();
+        if (!$loan) return;
+        $schedules = $this->db->where('loan_id', $loan_id)->order_by('payment_number', 'ASC')->get($this->table)->result();
+        $running_balance = floatval($loan->loan_principal);
+        foreach ($schedules as $s) {
+            $principal = floatval($s->principal ?? 0);
+            $running_balance -= $principal;
+            $this->db->where('id', $s->id)->update($this->table, array('loan_balance' => max(0, $running_balance)));
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
         }
     }
 
     /**
+<<<<<<< HEAD
      * True when every real installment (amount > 0) is fully paid.
      */
     public function is_loan_fully_paid($loan_number)
@@ -1522,6 +1629,28 @@ $tid = "ST." . date('Y') . date('m') . date('d') . '.' . rand(100, 999);
         }
 
         $rows = $this->db->select('amount, paid_amount, status')
+=======
+     * Check if loan should be closed - prevents premature closure by verifying total paid >= total due
+     */
+    private function _should_close_loan($loan_number, $pay_number) {
+        $loan_number = (int)$loan_number;
+        $pay_number = (int)$pay_number;
+        if ($loan_number <= 0 || $pay_number <= 0) {
+            return false;
+        }
+
+        $loan = $this->db->select('loan_status')
+            ->from('loan')
+            ->where('loan_id', $loan_number)
+            ->get()
+            ->row();
+        if (!$loan || strtoupper(trim((string)$loan->loan_status)) !== 'ACTIVE') {
+            return false;
+        }
+
+        // Only rows with a positive installment amount represent real obligations.
+        $rows = $this->db->select('payment_number, amount, paid_amount')
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             ->from($this->table)
             ->where('loan_id', $loan_number)
             ->where('amount >', 0)
@@ -1533,6 +1662,7 @@ $tid = "ST." . date('Y') . date('m') . date('d') . '.' . rand(100, 999);
             return false;
         }
 
+<<<<<<< HEAD
         $total_due = 0.0;
         $total_paid = 0.0;
         foreach ($rows as $row) {
@@ -1650,6 +1780,25 @@ $tid = "ST." . date('Y') . date('m') . date('d') . '.' . rand(100, 999);
         }
 
         return $this->close_loan_if_fully_paid($loan_number, $pay_number);
+=======
+        $last_meaningful_pn = (int)$rows[count($rows) - 1]->payment_number;
+        if ($pay_number !== $last_meaningful_pn) {
+            return false;
+        }
+
+        $total_due = 0.0;
+        $total_paid = 0.0;
+        foreach ($rows as $r) {
+            $total_due += (float)$r->amount;
+            $total_paid += (float)$r->paid_amount;
+        }
+
+        if ($total_due <= 0.0001) {
+            return false;
+        }
+
+        return $total_paid >= $total_due - 0.01;
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
     }
     function pay($loan_number,$pay_number,$amount)
     {
@@ -1914,6 +2063,7 @@ public function bad_debits($from,$to){
         $this->db->where($this->id, $id);
         $this->db->delete($this->table);
     }
+<<<<<<< HEAD
     /**
      * Shared arrears rules used by dashboard summary and arrears reports.
      */
@@ -1996,6 +2146,54 @@ public function bad_debits($from,$to){
 
         return $this->db->get()->result();
     }
+=======
+//    arrears
+function  arrears($loan,$from,$to,$by_date,$idofficer ){
+    	$this->db->select("*,employees.Firstname as efname,individual_customers.Firstname as ifname,individual_customers.Lastname as ilname,employees.Lastname as elname,")->from($this->table)
+			->join('loan','loan.loan_id = payement_schedules.loan_id')
+			->join('loan_products', 'loan_products.loan_product_id = loan.loan_product', 'LEFT')
+			->join('individual_customers','individual_customers.id = payement_schedules.customer','LEFT')
+			->join('employees','employees.id = loan.loan_added_by','LEFT')
+			->where('payment_schedule < CURDATE()')
+			->where('payement_schedules.status','NOT PAID')
+			->where('loan.loan_status','ACTIVE')
+    ->where('loan.loan_status <>','DELETED');
+	if($from !="" && $to !=""){
+		$this->db->where('payment_schedule BETWEEN "'. date('Y-m-d', strtotime($from)). '" and "'. date('Y-m-d', strtotime($to)).'"');
+
+	}
+
+	if($by_date=="one_day"){
+		$this->db->where('payement_schedules.payment_schedule = SUBDATE(CURDATE(),1)');
+	}
+	if($by_date=="three_days"){
+		$this->db->where('payement_schedules.payment_schedule BETWEEN SUBDATE(CURDATE(),3) AND SUBDATE(CURDATE(),1)');
+
+	}
+	if($by_date=="week"){
+		$this->db->where('payement_schedules.payment_schedule BETWEEN SUBDATE(CURDATE(),7) AND SUBDATE(CURDATE(),1)');
+
+	}
+	if($by_date=="month"){
+		$this->db->where('payement_schedules.payment_schedule BETWEEN SUBDATE(CURDATE(),30) AND SUBDATE(CURDATE(),1)');
+
+	}
+	if($by_date=="2month"){
+		$this->db->where('payement_schedules.payment_schedule BETWEEN SUBDATE(CURDATE(),60) AND SUBDATE(CURDATE(),1)');
+
+	}if($by_date=="3month"){
+		$this->db->where('payement_schedules.payment_schedule BETWEEN SUBDATE(CURDATE(),90) AND SUBDATE(CURDATE(),1)');
+
+	}
+	if($loan !="All"){
+		$this->db->where('payement_schedules.loan_id',$loan);
+	}
+    if($idofficer !="All"){
+        $this->db->where('loan.loan_added_by',$idofficer );
+    }
+    return	$this->db->get()->result();
+}
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 function  payment_today(){
 	date_default_timezone_set("Africa/Blantyre");
 	$curr_date = date('Y-m-d');

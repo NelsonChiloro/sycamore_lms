@@ -17,8 +17,11 @@ $charge = get_by_id('charges','charge_id','1');
 	</div>
 	<div class="card">
 		<div class="card-body" style="border: thick #153505 solid;border-radius: 14px;">
+<<<<<<< HEAD
             <?php if (!empty($show_loan_filters)) { $this->load->view('loan/_loan_list_filters'); } ?>
             <hr>
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
             <div style="overflow-y: auto"">
             <table  id="data-table" class="tableCss" >
                 <thead>
@@ -53,17 +56,25 @@ $charge = get_by_id('charges','charge_id','1');
                 </tr>
                 </thead>
                 <tbody><?php
+<<<<<<< HEAD
                 $n = isset($list_offset) ? ($list_offset + 1) : 1;
+=======
+                $n = 1;
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
                 $mandate_fees = FALSE;
                 foreach ($loan_data as $loan)
                 {
+<<<<<<< HEAD
                    $has_loan = $this->db->select("*")->from('loan')
                        ->where('loan_customer', $loan->loan_customer)
                        ->where('loan_product', $loan->loan_product)
                        ->where('loan_status', 'ACTIVE')
                        ->where('loan_id !=', $loan->loan_id)
                        ->get()->row();
+=======
+                   $has_loan = $this->db->select("*")->from('loan')->where('loan_customer',$loan->loan_customer)->where('loan_status','ACTIVE')->get()->row();
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
                    $pays = FALSE;
                     $paid = get_by_id('loan_products','loan_product_id', $loan->loan_product);
@@ -99,7 +110,11 @@ $charge = get_by_id('charges','charge_id','1');
 
 
 
+<<<<<<< HEAD
                             <button type="button" class="btn btn-sm btn-danger" onclick="openDisburseModal(<?php echo (int)$loan->loan_id; ?>, '<?php echo htmlspecialchars($loan->loan_number, ENT_QUOTES); ?>')">Disburse</button>
+=======
+                            <a class="btn btn-sm btn-danger" href="<?php echo base_url('loan/approval_action?id=').$loan->loan_id."&action=ACTIVE" ?>" onclick="return confirm('Are you sure you want to disburse this?')">Disburse</a>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
 
                             <a href="<?php echo base_url('loan/view/').$loan->loan_id?>" class="btn btn-sm btn-info">View loan</a>
@@ -113,11 +128,15 @@ $charge = get_by_id('charges','charge_id','1');
                 </tbody>
             </table>
         </div>
+<<<<<<< HEAD
         <?php $this->load->view('loan/_loan_list_pagination'); ?>
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 
 		</div>
 	</div>
 </div>
+<<<<<<< HEAD
 
 <div aria-hidden="true" class="onboarding-modal modal fade" id="disburse_loan_modal" role="dialog" tabindex="-1">
     <div class="modal-dialog modal-centered" role="document">
@@ -156,3 +175,5 @@ function openDisburseModal(loanId, loanNumber) {
     $('#disburse_loan_modal').modal('show');
 }
 </script>
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d

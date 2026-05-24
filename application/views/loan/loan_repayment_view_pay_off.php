@@ -1,6 +1,9 @@
 <?php
 $next_payment_details = $this->Payement_schedules_model->get_next($next_payment_id,$loan_id);
+<<<<<<< HEAD
 $can_accept_payment = in_array(strtoupper(trim((string) $loan_status)), array('ACTIVE', 'WRITTEN_OFF'), true);
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 ?>
 <div class="main-content">
     <div class="page-header">
@@ -56,6 +59,7 @@ $can_accept_payment = in_array(strtoupper(trim((string) $loan_status)), array('A
                             <td style="text-align: right;padding-right: 10px;">Total Loan cover</td>
                             <td>MK<?php echo number_format($loan_cover_amount,2)?></td>
                         </tr>
+<<<<<<< HEAD
                         <?php
                         if (!isset($payment_balance)) {
                             $payment_balance = $this->Payement_schedules_model->summarize_loan_balances($payments, $loan_amount_total);
@@ -72,6 +76,43 @@ $can_accept_payment = in_array(strtoupper(trim((string) $loan_status)), array('A
                         <tr>
                             <td style="text-align: right;padding-right: 10px;">Remaining Balance</td>
                             <td>MWK <?php echo number_format($payment_balance->remaining_balance, 2); ?></td>
+=======
+                        <tr>
+                            <td style="text-align: right;padding-right: 10px;">Total loan amount</td>
+                            <td>MK <?php echo number_format($loan_amount_total,2)?></td>
+                        </tr>
+                        <tr>
+                            <td style="text-align: right;padding-right: 10px;">Payments Made</td>
+                            <td>MK
+                                <?php
+                                $total_p = 0;
+                                foreach ($payments as $pp){
+
+                                    $total_p +=$pp->paid_amount;
+
+                                }
+                                echo number_format($total_p,2);
+                                ?>
+
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="text-align: right;padding-right: 10px;">Remaining Balance
+                            </td>
+                            <td>MK
+
+                                <?php
+                                $total_b = 0;
+                                foreach ($payments as $ppp){
+
+                                    $total_b +=$pp->amount;
+
+
+                                }
+                                echo number_format($total_b-$total_p,2);
+                                ?>
+                            </td>
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                         </tr>
                     </table>
                     <br>
@@ -245,11 +286,33 @@ $can_accept_payment = in_array(strtoupper(trim((string) $loan_status)), array('A
                 }else{
                     ?>
                     <h4>Pay</h4>
+<<<<<<< HEAD
                     <?php if ($can_accept_payment) { ?>
                         <a href="#" onclick="finish_payment()" class="btn btn-small btn-danger">Pay off payment</a>|
                     <?php } else { ?>
                         <p class="text-muted small">Payments are not available for this loan status.</p>
                     <?php }
+=======
+                    <?php if($p->loan_status=='ACTIVE'){
+                        ?>
+
+
+                        <?php
+//if($oved !=""){
+//
+//}else{
+                        ?>
+
+
+                        <a href="#" onclick="finish_payment()" class="btn btn-small btn-danger">Pay off payment</a>|
+
+                        <?php
+//                        }
+
+                    }else{
+
+                    }
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                     ?>
 <!--                    <a href="#" class="btn btn-sm btn-success" onclick="">Late Charges View</a>-->
                     <?php

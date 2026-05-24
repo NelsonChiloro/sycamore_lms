@@ -16,6 +16,7 @@ class Employees_model extends CI_Model
     }
 
     // get all
+<<<<<<< HEAD
     /**
      * Normalize role name for comparisons.
      */
@@ -153,6 +154,8 @@ class Employees_model extends CI_Model
         $this->db->reset_query();
     }
 
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
     function get_all()
     {
         $this->db->order_by('employees.id', $this->order);

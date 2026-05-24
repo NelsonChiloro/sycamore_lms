@@ -2,9 +2,12 @@
 if (!isset($loan_types) || !is_array($loan_types)) {
     $loan_types = array();
 }
+<<<<<<< HEAD
 if (!isset($branches) || !is_array($branches)) {
     $branches = function_exists('get_all') ? get_all('branches') : array();
 }
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
 ?>
 
 <div class="main-content">
@@ -52,6 +55,7 @@ if (!isset($branches) || !is_array($branches)) {
                                         </select>
                                     </div>
                                 </div>
+<<<<<<< HEAD
 
                                 <div class="form-group row">
                                     <label class="col-sm-3 col-form-label">Branch:</label>
@@ -66,6 +70,8 @@ if (!isset($branches) || !is_array($branches)) {
                                         </select>
                                     </div>
                                 </div>
+=======
+>>>>>>> 808554ff5caea0db9a21de0721b02d4d60db333d
                                 
                                 <div class="form-group row">
                                     <label class="col-sm-3 col-form-label">Group:</label>
