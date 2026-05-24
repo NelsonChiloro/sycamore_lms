@@ -6,6 +6,9 @@
 
 class Reports extends CI_Controller
 {
+    const SUMMARY_CACHE_TTL = 600;
+    const SUMMARY_SESSION_CACHE_KEY = 'summary_dashboard_cache';
+
 		public  function __construct()
 	{
 		parent::__construct();
@@ -18,6 +21,7 @@ class Reports extends CI_Controller
 		$this->load->model('Global_config_model');
 		$this->load->model('Borrowed_repayements_model');
         $this->load->model('Collateral_model');
+        $this->load->helper('report_service');
 
     }
 public function parfilter(){
@@ -53,11 +57,16 @@ public function caparfilter(){
 	$this->load->view('admin/footer');
 }
 public function summary(){
+    $summary_cache_state = $this->get_summary_cache_state(false);
+    $summary_payload = $summary_cache_state['payload'];
+
 	$data = array(
 		'logs' => get_logs('activity_logger','user_id',$this->session->userdata('user_id')),
 		'settings' => get_by_id('settings','settings_id','1'),
-		'summary_stats' => $this->get_summary_metrics(),
-		'product_balances' => $this->get_summary_product_balances(),
+        'summary_stats' => $summary_payload['summary_stats'],
+        'product_balances' => $summary_payload['product_balances'],
+        'summary_source' => $summary_cache_state['source'],
+        'summary_needs_refresh' => $summary_cache_state['needs_refresh'],
 	);
 
 	$this->load->view('admin/header');
@@ -65,74 +74,227 @@ public function summary(){
 	$this->load->view('admin/footer');
 }
 
+public function summary_data()
+{
+    $summary_cache_state = $this->get_summary_cache_state(true);
+
+    $this->output
+        ->set_content_type('application/json')
+        ->set_output(json_encode(array(
+            'success' => true,
+            'source' => $summary_cache_state['source'],
+            'needs_refresh' => $summary_cache_state['needs_refresh'],
+            'summary_stats' => $summary_cache_state['payload']['summary_stats'],
+            'product_balances' => $summary_cache_state['payload']['product_balances'],
+        )));
+}
+
+private function get_summary_cache_state($refresh_if_needed = true)
+{
+    $default_payload = $this->normalize_summary_payload(array(
+        'summary_stats' => $this->get_default_summary_metrics(),
+        'product_balances' => array(),
+    ));
+
+    $cached_summary = $this->read_summary_cache();
+    if ($cached_summary && $cached_summary['is_fresh']) {
+        return array(
+            'payload' => $cached_summary['payload'],
+            'source' => 'fresh-cache',
+            'needs_refresh' => false,
+        );
+    }
+
+    if (!$refresh_if_needed) {
+        return array(
+            'payload' => $cached_summary ? $cached_summary['payload'] : $default_payload,
+            'source' => $cached_summary ? 'stale-cache' : 'default',
+            'needs_refresh' => true,
+        );
+    }
+
+    $payload = $this->normalize_summary_payload(array(
+        'summary_stats' => $this->get_summary_metrics(),
+        'product_balances' => $this->get_summary_product_balances(),
+    ));
+
+    $this->write_summary_cache($payload);
+
+    return array(
+        'payload' => $payload,
+        'source' => 'fresh-query',
+        'needs_refresh' => false,
+    );
+}
+
+private function read_summary_cache()
+{
+    $session_cache = $this->read_summary_session_cache();
+    if ($session_cache !== null) {
+        return $session_cache;
+    }
+
+    $cache_file = $this->get_summary_cache_file();
+    if (!file_exists($cache_file)) {
+        return null;
+    }
+
+    $raw_cache = @file_get_contents($cache_file);
+    $cached_payload = json_decode((string) $raw_cache, true);
+    if (
+        !is_array($cached_payload)
+        || !isset($cached_payload['generated_at'], $cached_payload['payload'])
+        || !isset($cached_payload['payload']['summary_stats'], $cached_payload['payload']['product_balances'])
+    ) {
+        return null;
+    }
+
+    return $this->normalize_summary_cache_payload($cached_payload);
+}
+
+private function write_summary_cache($payload)
+{
+    $cache_payload = array(
+        'generated_at' => time(),
+        'payload' => $payload,
+    );
+
+    $this->session->set_userdata(self::SUMMARY_SESSION_CACHE_KEY, $cache_payload);
+    @file_put_contents($this->get_summary_cache_file(), json_encode($cache_payload));
+}
+
+private function get_summary_cache_file()
+{
+    return APPPATH . 'cache/summary_dashboard_cache.php';
+}
+
+private function read_summary_session_cache()
+{
+    $cached_payload = $this->session->userdata(self::SUMMARY_SESSION_CACHE_KEY);
+    if (!is_array($cached_payload)) {
+        return null;
+    }
+
+    return $this->normalize_summary_cache_payload($cached_payload);
+}
+
+private function normalize_summary_cache_payload($cached_payload)
+{
+    if (
+        !is_array($cached_payload)
+        || !isset($cached_payload['generated_at'], $cached_payload['payload'])
+        || !isset($cached_payload['payload']['summary_stats'], $cached_payload['payload']['product_balances'])
+    ) {
+        return null;
+    }
+
+    return array(
+        'payload' => $this->normalize_summary_payload($cached_payload['payload']),
+        'is_fresh' => (time() - (int) $cached_payload['generated_at']) < self::SUMMARY_CACHE_TTL,
+    );
+}
+
+private function normalize_summary_payload($payload)
+{
+    $payload = is_array($payload) ? $payload : array();
+    $summary_stats = isset($payload['summary_stats']) && is_array($payload['summary_stats'])
+        ? $payload['summary_stats']
+        : array();
+    $product_balances = isset($payload['product_balances']) && is_array($payload['product_balances'])
+        ? $payload['product_balances']
+        : array();
+
+    return array(
+        'summary_stats' => array_merge($this->get_default_summary_metrics(), $summary_stats),
+        'product_balances' => array_map(array($this, 'normalize_summary_product_balance_item'), $product_balances),
+    );
+}
+
+private function normalize_summary_product_balance_item($product_balance)
+{
+    if (is_object($product_balance)) {
+        return $product_balance;
+    }
+
+    if (!is_array($product_balance)) {
+        $product_balance = array();
+    }
+
+    return (object) array(
+        'loan_product_id' => isset($product_balance['loan_product_id']) ? $product_balance['loan_product_id'] : '',
+        'product_name' => isset($product_balance['product_name']) ? $product_balance['product_name'] : '',
+        'product_code' => isset($product_balance['product_code']) ? $product_balance['product_code'] : '',
+        'outstanding_principal' => isset($product_balance['outstanding_principal']) ? $product_balance['outstanding_principal'] : 0,
+    );
+}
+
+private function get_default_summary_metrics()
+{
+    return array(
+        'paid_interest' => 0,
+        'paid_lc' => 0,
+        'paid_af' => 0,
+        'outstanding_interest' => 0,
+        'outstanding_lc' => 0,
+        'outstanding_af' => 0,
+        'total_unpaid' => 0,
+        'total_arrears' => 0,
+        'one_day_arrears' => 0,
+        'three_day_arrears' => 0,
+        'week_arrears' => 0,
+        'month_arrears' => 0,
+        'two_month_arrears' => 0,
+        'three_month_arrears' => 0,
+        'par_percentage' => 0,
+        'payments_today' => 0,
+        'payments_week' => 0,
+        'payments_month' => 0,
+    );
+}
+
 private function get_summary_metrics()
 {
 	date_default_timezone_set('Africa/Blantyre');
 
-	$stats = array(
-		'paid_interest' => 0,
-		'paid_lc' => 0,
-		'paid_af' => 0,
-		'outstanding_interest' => 0,
-		'outstanding_lc' => 0,
-		'outstanding_af' => 0,
-		'total_unpaid' => 0,
-		'total_arrears' => 0,
-		'one_day_arrears' => 0,
-		'three_day_arrears' => 0,
-		'week_arrears' => 0,
-		'month_arrears' => 0,
-		'two_month_arrears' => 0,
-		'three_month_arrears' => 0,
-		'payments_today' => 0,
-		'payments_week' => 0,
-		'payments_month' => 0,
-	);
+    $stats = $this->get_default_summary_metrics();
 
-	$overviewSql = "SELECT
+    $today = date('Y-m-d');
+    $tomorrow = date('Y-m-d', strtotime('+1 day'));
+    $weekStart = date('Y-m-d', strtotime('last Sunday'));
+    $weekEndExclusive = date('Y-m-d', strtotime('next Sunday +1 day'));
+    $monthStart = date('Y-m-01');
+    $nextMonthStart = date('Y-m-01', strtotime('first day of next month'));
+
+    $metricsSql = "SELECT
 			SUM(CASE WHEN ps.status = 'PAID' THEN COALESCE(ps.interest, 0) ELSE 0 END) AS paid_interest,
 			SUM(CASE WHEN ps.status = 'PAID' THEN COALESCE(ps.ploan_cover, 0) ELSE 0 END) AS paid_lc,
 			SUM(CASE WHEN ps.status = 'PAID' THEN COALESCE(ps.padmin_fee, 0) ELSE 0 END) AS paid_af,
 			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' THEN COALESCE(ps.interest, 0) ELSE 0 END) AS outstanding_interest,
 			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' THEN COALESCE(ps.ploan_cover, 0) ELSE 0 END) AS outstanding_lc,
 			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' THEN COALESCE(ps.padmin_fee, 0) ELSE 0 END) AS outstanding_af,
-			SUM(CASE WHEN l.loan_status = 'ACTIVE' THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS total_unpaid
-		FROM payement_schedules ps
-		JOIN loan l ON l.loan_id = ps.loan_id";
-
-	$overview = $this->run_summary_query($overviewSql);
-	if ($overview) {
-		$stats['paid_interest'] = (float) $overview->paid_interest;
-		$stats['paid_lc'] = (float) $overview->paid_lc;
-		$stats['paid_af'] = (float) $overview->paid_af;
-		$stats['outstanding_interest'] = (float) $overview->outstanding_interest;
-		$stats['outstanding_lc'] = (float) $overview->outstanding_lc;
-		$stats['outstanding_af'] = (float) $overview->outstanding_af;
-		$stats['total_unpaid'] = (float) $overview->total_unpaid;
-	}
-
-	$today = date('Y-m-d');
-	$tomorrow = date('Y-m-d', strtotime('+1 day'));
-	$weekStart = date('Y-m-d', strtotime('last Sunday'));
-	$weekEndExclusive = date('Y-m-d', strtotime('next Sunday +1 day'));
-	$monthStart = date('Y-m-01');
-	$nextMonthStart = date('Y-m-01', strtotime('first day of next month'));
-
-	$timingSql = "SELECT
-			SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS total_arrears,
-			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) ELSE 0 END) AS one_day_arrears,
-			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 3 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) ELSE 0 END) AS three_day_arrears,
-			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) ELSE 0 END) AS week_arrears,
-			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) ELSE 0 END) AS month_arrears,
-			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 60 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) ELSE 0 END) AS two_month_arrears,
-			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) ELSE 0 END) AS three_month_arrears,
+            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS total_unpaid,
+            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS total_arrears,
+            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS one_day_arrears,
+            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 3 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS three_day_arrears,
+            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS week_arrears,
+            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS month_arrears,
+            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 60 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS two_month_arrears,
+            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS three_month_arrears,
+            ROUND(
+                (
+                    SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END)
+                    /
+                    NULLIF(SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END), 0)
+                ) * 100,
+                2
+            ) AS par_percentage,
 			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= ? AND ps.payment_schedule < ? THEN COALESCE(ps.amount, 0) ELSE 0 END) AS payments_today,
 			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= ? AND ps.payment_schedule < ? THEN COALESCE(ps.amount, 0) ELSE 0 END) AS payments_week,
 			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= ? AND ps.payment_schedule < ? THEN COALESCE(ps.amount, 0) ELSE 0 END) AS payments_month
 		FROM payement_schedules ps
 		JOIN loan l ON l.loan_id = ps.loan_id";
 
-	$timing = $this->run_summary_query($timingSql, array(
+    $metrics = $this->run_summary_query($metricsSql, array(
 		$today,
 		$tomorrow,
 		$weekStart,
@@ -141,17 +303,25 @@ private function get_summary_metrics()
 		$nextMonthStart,
 	));
 
-	if ($timing) {
-		$stats['total_arrears'] = (float) $timing->total_arrears;
-		$stats['one_day_arrears'] = (float) $timing->one_day_arrears;
-		$stats['three_day_arrears'] = (float) $timing->three_day_arrears;
-		$stats['week_arrears'] = (float) $timing->week_arrears;
-		$stats['month_arrears'] = (float) $timing->month_arrears;
-		$stats['two_month_arrears'] = (float) $timing->two_month_arrears;
-		$stats['three_month_arrears'] = (float) $timing->three_month_arrears;
-		$stats['payments_today'] = (float) $timing->payments_today;
-		$stats['payments_week'] = (float) $timing->payments_week;
-		$stats['payments_month'] = (float) $timing->payments_month;
+    if ($metrics) {
+        $stats['paid_interest'] = (float) $metrics->paid_interest;
+        $stats['paid_lc'] = (float) $metrics->paid_lc;
+        $stats['paid_af'] = (float) $metrics->paid_af;
+        $stats['outstanding_interest'] = (float) $metrics->outstanding_interest;
+        $stats['outstanding_lc'] = (float) $metrics->outstanding_lc;
+        $stats['outstanding_af'] = (float) $metrics->outstanding_af;
+        $stats['total_unpaid'] = (float) $metrics->total_unpaid;
+        $stats['total_arrears'] = (float) $metrics->total_arrears;
+        $stats['one_day_arrears'] = (float) $metrics->one_day_arrears;
+        $stats['three_day_arrears'] = (float) $metrics->three_day_arrears;
+        $stats['week_arrears'] = (float) $metrics->week_arrears;
+        $stats['month_arrears'] = (float) $metrics->month_arrears;
+        $stats['two_month_arrears'] = (float) $metrics->two_month_arrears;
+        $stats['three_month_arrears'] = (float) $metrics->three_month_arrears;
+        $stats['par_percentage'] = (float) $metrics->par_percentage;
+        $stats['payments_today'] = (float) $metrics->payments_today;
+        $stats['payments_week'] = (float) $metrics->payments_week;
+        $stats['payments_month'] = (float) $metrics->payments_month;
 	}
 
 	return $stats;
@@ -163,11 +333,18 @@ private function get_summary_product_balances()
 			lp.loan_product_id,
 			lp.product_name,
 			lp.product_code,
-			COALESCE(SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' THEN COALESCE(ps.principal, 0) ELSE 0 END), 0) AS outstanding_principal
+            COALESCE(product_balances.outstanding_principal, 0) AS outstanding_principal
 		FROM loan_products lp
-		LEFT JOIN loan l ON l.loan_product = lp.loan_product_id
-		LEFT JOIN payement_schedules ps ON ps.loan_id = l.loan_id
-		GROUP BY lp.loan_product_id, lp.product_name, lp.product_code
+        LEFT JOIN (
+            SELECT
+                l.loan_product,
+                SUM(CASE WHEN ps.status = 'NOT PAID' THEN COALESCE(ps.principal, 0) ELSE 0 END) AS outstanding_principal
+            FROM loan l
+            JOIN payement_schedules ps ON ps.loan_id = l.loan_id
+            WHERE l.loan_status = 'ACTIVE'
+              AND ps.status IN ('NOT PAID', 'PARTIAL PAID')
+            GROUP BY l.loan_product
+        ) product_balances ON product_balances.loan_product = lp.loan_product_id
 		ORDER BY lp.product_name ASC";
 
 	$query = $this->run_summary_query($sql, array(), true);
@@ -469,6 +646,7 @@ public function tray(){
         $idofficer = $this->input->get('idofficer');
 		if($search=="filter"){
 			$data['loan_data'] = $this->Payement_schedules_model->arrears($product,$from,$to,$by_date,$idofficer );
+			$data['arrears_total'] = $this->Payement_schedules_model->sum_institutional_arrears($product, $from, $to, $by_date, $idofficer);
 			$menu_toggle['toggles'] = 40;
 
 			$this->load->view('admin/header', $menu_toggle);
@@ -488,6 +666,7 @@ public function tray(){
 $this->excel_arrears($data);
 		}else {
 			$data['loan_data'] = $this->Payement_schedules_model->arrears($product,$from,$to,$by_date,$idofficer );
+			$data['arrears_total'] = $this->Payement_schedules_model->sum_institutional_arrears($product, $from, $to, $by_date, $idofficer);
 			$menu_toggle['toggles'] = 40;
 
 			$this->load->view('admin/header', $menu_toggle);
@@ -907,17 +1086,7 @@ public function payments_filter() {
      * @return string RBM classification
      */
     private function determine_rbm_classification($days_in_arrears) {
-        if ($days_in_arrears < 30) {
-            return 'Standard';
-        } else if ($days_in_arrears >= 30 && $days_in_arrears < 60) {
-            return 'Special Mention';
-        } else if ($days_in_arrears >= 60 && $days_in_arrears < 90) {
-            return 'Substandard';
-        } else if ($days_in_arrears >= 90 && $days_in_arrears < 180) {
-            return 'Doubtful';
-        } else {
-            return 'Loss';
-        }
+        return determine_rbm_classification($days_in_arrears);
     }
 
     /**
@@ -1135,7 +1304,10 @@ public function payments_filter() {
             xlsWriteLabel($tablebody, $kolombody++, $data->loan_number);
             xlsWriteLabel($tablebody, $kolombody++, $data->product_name);
             xlsWriteLabel($tablebody, $kolombody++, $data->payment_schedule);
-            xlsWriteLabel($tablebody, $kolombody++, $data->amount);
+            $amount_due = isset($data->amount_due)
+                ? (float) $data->amount_due
+                : ((float) $data->amount - (float) $data->paid_amount);
+            xlsWriteNumber($tablebody, $kolombody++, $amount_due);
             xlsWriteLabel($tablebody, $kolombody++, $data->payment_number);
 
             xlsWriteLabel($tablebody, $kolombody++, $data->efname.' '.$data->elname);

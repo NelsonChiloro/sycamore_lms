@@ -14,7 +14,7 @@ class Loan_products extends CI_Controller
 
     public function index()
     {
-        $q = urldecode($this->input->get('q', TRUE));
+        $q = urldecode((string) $this->input->get('q', TRUE));
         $start = intval($this->input->get('start'));
         
         if ($q <> '') {
@@ -47,7 +47,7 @@ class Loan_products extends CI_Controller
     }
     public function to_delete()
     {
-        $q = urldecode($this->input->get('q', TRUE));
+        $q = urldecode((string) $this->input->get('q', TRUE));
         $start = intval($this->input->get('start'));
 
         if ($q <> '') {
@@ -80,7 +80,7 @@ class Loan_products extends CI_Controller
     }
 public function to_update()
     {
-        $q = urldecode($this->input->get('q', TRUE));
+        $q = urldecode((string) $this->input->get('q', TRUE));
         $start = intval($this->input->get('start'));
 
         if ($q <> '') {

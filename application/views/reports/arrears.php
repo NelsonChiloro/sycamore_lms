@@ -33,7 +33,8 @@ $products = get_all_loans('loan');
 							?>
 						</select>
 						<select name="by_date" class="sselect" id="by_date">
-							<option value="Custom">Custom</option>
+							<option value="All" <?php if($this->input->get('by_date')=="All"){echo "selected";} ?>>All arrears</option>
+							<option value="Custom" <?php if($this->input->get('by_date')=="Custom" || $this->input->get('by_date')===""){echo "selected";} ?>>Custom</option>
 							<option value="one_day" <?php  if($this->input->get('by_date')=="one_day"){echo "selected";} ?>>One day</option>
 							<option value="three_days" <?php  if($this->input->get('by_date')=="three_days"){echo "selected";} ?>>Three days</option>
 							<option value="week" <?php  if($this->input->get('by_date')=="week"){echo "selected";} ?>>One week</option>
@@ -85,10 +86,15 @@ $products = get_all_loans('loan');
 				<tbody>
 				<?php
 				$n = 1;
-$totals =0;
+				$totals = isset($arrears_total) ? (float) $arrears_total : 0;
 				foreach ($loan_data as $loan)
 				{
-					$totals +=$loan->amount;
+					$amount_due = isset($loan->amount_due)
+						? (float) $loan->amount_due
+						: ((float) $loan->amount - (float) $loan->paid_amount);
+					if (!isset($arrears_total)) {
+						$totals += $amount_due;
+					}
 					if($loan->customer_type=='group'){
 						$group = $this->Groups_model->get_by_id($loan->loan_customer);
 
@@ -109,7 +115,7 @@ $totals =0;
 						<td><?php echo $loan->product_name ?></td>
 						<td><?php echo $loan->payment_schedule ?></td>
 <!--						<td>MK--><?php //echo number_format($loan->loan_principal,2) ?><!--</td>-->
-						<td><?php echo $loan->amount ?></td>
+						<td><?php echo number_format($amount_due, 2); ?></td>
 						<td><?php echo $loan->payment_number ?></td>
 						<td><?php echo $loan->efname." ".$loan->elname ?></td>
 

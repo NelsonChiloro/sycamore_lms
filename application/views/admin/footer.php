@@ -1804,11 +1804,55 @@ function mish(id){
             );
         }
 
+        function parseAmountValue(value) {
+            if (typeof value === 'string') {
+                value = value.replace(/<[^>]*>/g, '');
+                value = value.replace(/[^0-9.\-]/g, '');
+            }
+            var parsed = parseFloat(value);
+            return isNaN(parsed) ? 0 : parsed;
+        }
+
+        function updateCollectionFooterTotal(dtApi) {
+            var tableNode = dtApi.table().node();
+            var $table = $(tableNode);
+            var $totalCell = $table.find('tfoot .collection-total-cell');
+            if (!$totalCell.length) {
+                return;
+            }
+
+            var amountColIdx = -1;
+            $table.find('thead th').each(function(index) {
+                if ($(this).text().trim().toLowerCase() === 'amount to collect') {
+                    amountColIdx = index;
+                    return false;
+                }
+            });
+            if (amountColIdx === -1) {
+                return;
+            }
+
+            var total = dtApi
+                .column(amountColIdx, { search: 'applied' })
+                .data()
+                .reduce(function(sum, value) {
+                    return sum + parseAmountValue(value);
+                }, 0);
+
+            $totalCell.text('MK' + total.toLocaleString(undefined, {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            }));
+        }
+
         // Check if DataTables is loaded
         if ($.fn.DataTable) {
             $('#data-table1').DataTable({
                 responsive: true,
                 dom: 'Bfrtip',
+                drawCallback: function() {
+                    updateCollectionFooterTotal(this.api());
+                },
                 buttons: [
                     {
                         extend: 'copy',
@@ -2014,6 +2058,9 @@ function mish(id){
             $('#data-table-collection').DataTable({
                 responsive: true,
                 dom: 'Bfrtip',
+                drawCallback: function() {
+                    updateCollectionFooterTotal(this.api());
+                },
                 buttons: [
                     {
                         extend: 'copy',

@@ -1,5 +1,6 @@
 <?php
 $next_payment_details = $this->Payement_schedules_model->get_next($next_payment_id,$loan_id);
+$can_accept_payment = in_array(strtoupper(trim((string) $loan_status)), array('ACTIVE', 'WRITTEN_OFF'), true);
 ?>
 <div class="main-content">
     <div class="page-header">
@@ -55,41 +56,22 @@ $next_payment_details = $this->Payement_schedules_model->get_next($next_payment_
                             <td style="text-align: right;padding-right: 10px;">Total Loan cover</td>
                             <td>MWK<?php echo number_format($loan_cover_amount,2)?></td>
                         </tr>
+                        <?php
+                        if (!isset($payment_balance)) {
+                            $payment_balance = $this->Payement_schedules_model->summarize_loan_balances($payments, $loan_amount_total);
+                        }
+                        ?>
                         <tr>
                             <td style="text-align: right;padding-right: 10px;">Total loan amount</td>
-                            <td>MWk <?php echo number_format($loan_amount_total,2)?></td>
+                            <td>MWK <?php echo number_format($payment_balance->total_loan_amount, 2); ?></td>
                         </tr>
                         <tr>
                             <td style="text-align: right;padding-right: 10px;">Payments Made</td>
-                            <td>MK
-                                <?php
-                                $total_p = 0;
-                                foreach ($payments as $pp){
-
-                                    $total_p +=$pp->paid_amount;
-
-                                }
-                                echo number_format($total_p,2);
-                                ?>
-
-                            </td>
+                            <td>MWK <?php echo number_format($payment_balance->total_paid, 2); ?></td>
                         </tr>
                         <tr>
-                            <td style="text-align: right;padding-right: 10px;">Remaining Balance
-                            </td>
-                            <td>MK
-
-                                <?php
-                                $total_b = 0;
-                                foreach ($payments as $ppp){
-
-                                    $total_b +=$pp->amount;
-
-
-                                }
-                                echo number_format($total_b-$total_p,2);
-                                ?>
-                            </td>
+                            <td style="text-align: right;padding-right: 10px;">Remaining Balance</td>
+                            <td>MWK <?php echo number_format($payment_balance->remaining_balance, 2); ?></td>
                         </tr>
                     </table>
                     <br>
@@ -263,27 +245,11 @@ $next_payment_details = $this->Payement_schedules_model->get_next($next_payment_
                 }else{
                     ?>
                     <h4>Pay</h4>
-                    <?php if($p->loan_status=='ACTIVE'){
-                        ?>
-
-
-                        <?php
-//if($oved !=""){
-//
-//}else{
-                        ?>
+                    <?php if ($can_accept_payment) { ?>
                         <a href="#" class="btn btn-sm btn-success" onclick="pay_current()">Make payment</a>
-                        
-
-                      
-
-                        <?php
-//                        }
-
-                    }else{
-
-                    }
-                    ?>
+                    <?php } else { ?>
+                        <p class="text-muted small">Payments are not available for this loan status.</p>
+                    <?php } ?>
 <!--                    <a href="#" class="btn btn-sm btn-success" onclick="">Late Charges View</a>-->
                     <?php
 

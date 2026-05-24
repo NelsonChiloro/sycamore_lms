@@ -1,5 +1,5 @@
 // loanPortfolioReport.js - With detailed performance logging
-const { query } = require('./databaseHelpers');
+const { query, sqlBranchJoin, determineRBMClassification } = require('./databaseHelpers');
 const moment = require('moment');
 const util = require('util');
 
@@ -77,14 +77,19 @@ async function generateLoanPortfolioReport(options, reportId, reportTrackers) {
             LEFT JOIN employees e ON e.id = loan.loan_added_by
             LEFT JOIN individual_customers ic ON loan.loan_customer = ic.id AND loan.customer_type = 'individual'
             LEFT JOIN \`groups\` g ON loan.loan_customer = g.group_id AND loan.customer_type = 'group'
-            LEFT JOIN branches b ON loan.branch = b.id
+            ${sqlBranchJoin('loan', 'b')}
             WHERE loan.loan_status IN ('ACTIVE', 'CLOSED', 'WRITTEN_OFF')
         `;
 
         // Add filters
         let filterCount = 0;
         if (branch !== 'All') {
-            sql += ` AND loan.branch = '${branch}'`;
+            const branchEsc = String(branch).replace(/'/g, "''");
+            sql += ` AND (
+                loan.branch = '${branchEsc}'
+                OR loan.branch IN (SELECT Code FROM branches WHERE id = '${branchEsc}')
+                OR loan.branch IN (SELECT BranchCode FROM branches WHERE id = '${branchEsc}')
+            )`;
             filterCount++;
         }
         if (status !== 'All') {
@@ -100,7 +105,13 @@ async function generateLoanPortfolioReport(options, reportId, reportTrackers) {
             filterCount++;
         }
         if (from && to) {
-            sql += ` AND loan.loan_added_date BETWEEN '${formatDate(from)}' AND '${formatDate(to)}'`;
+            sql += ` AND DATE(loan.loan_added_date) BETWEEN '${formatDate(from)}' AND '${formatDate(to)}'`;
+            filterCount++;
+        } else if (from) {
+            sql += ` AND DATE(loan.loan_added_date) >= '${formatDate(from)}'`;
+            filterCount++;
+        } else if (to) {
+            sql += ` AND DATE(loan.loan_added_date) <= '${formatDate(to)}'`;
             filterCount++;
         }
 
@@ -238,6 +249,7 @@ async function generateLoanPortfolioReport(options, reportId, reportTrackers) {
             loan.actual_payments = parseFloat(paymentInfo.actual_payments || 0);
             loan.amount_in_arrears = parseFloat(paymentInfo.amount_in_arrears || 0);
             loan.days_in_arrears = parseInt(paymentInfo.days_in_arrears || 0);
+            loan.rbm_classification = determineRBMClassification(loan.days_in_arrears);
             loan.maturity_date = paymentInfo.maturity_date;
             loan.last_credit_date = lastPaymentMap[loan.loan_number];
             loan.collateral_value = parseFloat(collateralMap[loan.loan_id] || 0);
@@ -391,6 +403,7 @@ function generateHTML(loanData) {
                     <th>Outstanding (MWK)</th>
                     <th>Amount in Arrears (MWK)</th>
                     <th>Days in Arrears</th>
+                    <th>RBM Loan Classification</th>
                     <th>Last Payment Date</th>
                     <th>Collateral Value (MWK)</th>
                     <th>Maturity Date</th>
@@ -428,6 +441,7 @@ function generateHTML(loanData) {
                     <td class="text-right">${formatNumber(loan.outstanding_balance)}</td>
                     <td class="text-right">${formatNumber(loan.amount_in_arrears)}</td>
                     <td class="text-center">${loan.days_in_arrears}</td>
+                    <td>${loan.rbm_classification || 'Standard'}</td>
                     <td>${formatDisplayDate(loan.last_credit_date)}</td>
                     <td class="text-right">${formatNumber(loan.collateral_value)}</td>
                     <td>${formatDisplayDate(loan.maturity_date)}</td>

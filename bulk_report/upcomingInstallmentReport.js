@@ -1,4 +1,5 @@
 const moment = require('moment');
+const { determineRBMClassification } = require('./databaseHelpers');
 const fs = require('fs');
 const path = require('path');
 
@@ -25,6 +26,8 @@ async function generateUpcomingInstallmentReport(filterOptions, reportId, report
             filterOptions.user || '',
             filterOptions.product || '',
             filterOptions.branch || '',
+            filterOptions.from || '',
+            filterOptions.to || '',
             reportId,
             reportTrackers,
             db
@@ -35,7 +38,9 @@ async function generateUpcomingInstallmentReport(filterOptions, reportId, report
             ...filterOptions,
             branchName: result.filterBranchName,
             userName: result.filterOfficerName,
-            productName: result.filterProductName
+            productName: result.filterProductName,
+            fromDate: result.filterFromDate,
+            toDate: result.filterToDate
         };
 
         // Generate HTML using the data
@@ -63,7 +68,7 @@ async function generateUpcomingInstallmentReport(filterOptions, reportId, report
  * @param {Object} db - Database connection
  * @returns {Promise<Object>} - Upcoming payment data with filter names
  */
-async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId, reportTrackers, db) {
+async function getUpcomingInstallmentData(loanOfficer, product, branch, fromDate, toDate, reportId, reportTrackers, db) {
     return new Promise((resolve, reject) => {
         if (!db) {
             return reject(new Error('Database connection is not available'));
@@ -77,6 +82,8 @@ async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId
         let filterBranchName = 'All Branches';
         let filterOfficerName = 'All Officers';
         let filterProductName = 'All Products';
+        let filterFromDate = fromDate || 'Any';
+        let filterToDate = toDate || 'Any';
 
         // Promise array for getting the filter names
         const filterPromises = [];
@@ -85,7 +92,7 @@ async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId
         if (branch) {
             filterPromises.push(
                 new Promise((resolveFilter, rejectFilter) => {
-                    db.query('SELECT BranchName FROM branches WHERE Code = ?', [branch], (err, result) => {
+                    db.query('SELECT BranchName FROM branches WHERE id = ? OR Code = ? LIMIT 1', [branch, branch], (err, result) => {
                         if (err) return rejectFilter(err);
                         if (result && result.length > 0) {
                             filterBranchName = result[0].BranchName;
@@ -130,6 +137,32 @@ async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId
         Promise.all(filterPromises)
             .then(() => {
                 // Build the query - replicating the model's next_payment function
+                const conditions = [
+                    "loan.loan_status = 'ACTIVE'",
+                    "payement_schedules.payment_number = loan.next_payment_id"
+                ];
+                const params = [];
+                if (loanOfficer) {
+                    conditions.push('loan.loan_added_by = ?');
+                    params.push(loanOfficer);
+                }
+                if (product) {
+                    conditions.push('loan.loan_product = ?');
+                    params.push(product);
+                }
+                if (branch) {
+                    conditions.push('(loan.branch = ? OR branches.Code = ?)');
+                    params.push(branch, branch);
+                }
+                if (fromDate) {
+                    conditions.push('DATE(payement_schedules.payment_schedule) >= ?');
+                    params.push(fromDate);
+                }
+                if (toDate) {
+                    conditions.push('DATE(payement_schedules.payment_schedule) <= ?');
+                    params.push(toDate);
+                }
+
                 const query = `
                     SELECT
                         payement_schedules.*,
@@ -156,18 +189,8 @@ async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId
                             LEFT JOIN
                         branches ON branches.id = loan.branch
                     WHERE
-                        loan.loan_status = 'ACTIVE'
-                      AND payement_schedules.payment_number = loan.next_payment_id
-                        ${loanOfficer ? 'AND loan.loan_added_by = ?' : ''}
-                        ${product ? 'AND loan.loan_product = ?' : ''}
-                        ${branch ? 'AND loan.branch = ?' : ''}
+                        ${conditions.join(' AND ')}
                 `;
-
-                // Build params array
-                const params = [];
-                if (loanOfficer) params.push(loanOfficer);
-                if (product) params.push(product);
-                if (branch) params.push(branch);
 
                 // Execute the query
                 db.query(query, params, async (err, payments) => {
@@ -272,6 +295,7 @@ async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId
                                 overpayment: overpayment,
                                 last_transaction_date: lastTransaction,
                                 days_in_arrears: daysInArrears,
+                                rbm_classification: determineRBMClassification(daysInArrears),
                                 installments_in_arrears: installmentsInArrears,
                                 officer_name: `${payment.efname} ${payment.elname}`
                             };
@@ -290,7 +314,9 @@ async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId
                         upcomingPayments,
                         filterBranchName,
                         filterOfficerName,
-                        filterProductName
+                        filterProductName,
+                        filterFromDate,
+                        filterToDate
                     });
                 });
             })
@@ -529,6 +555,7 @@ function generateHtml(upcomingPayments, filterOptions) {
             <td>${formatCurrency(payment.overpayment)}</td>
             <td>${payment.last_transaction_date}</td>
             <td>${payment.days_in_arrears}</td>
+            <td>${payment.rbm_classification || 'Standard'}</td>
             <td>${payment.installments_in_arrears}</td>
             <td>${payment.officer_name}</td>
         </tr>`;
@@ -649,6 +676,8 @@ function generateHtml(upcomingPayments, filterOptions) {
                 <p><strong>Branch:</strong> ${filterOptions.branchName || 'All Branches'}</p>
                 <p><strong>Loan Officer:</strong> ${filterOptions.userName || 'All Officers'}</p>
                 <p><strong>Loan Product:</strong> ${filterOptions.productName || 'All Products'}</p>
+                <p><strong>From Date:</strong> ${filterOptions.fromDate || 'Any'}</p>
+                <p><strong>To Date:</strong> ${filterOptions.toDate || 'Any'}</p>
             </div>
             
             <div class="export-buttons">
@@ -664,27 +693,35 @@ function generateHtml(upcomingPayments, filterOptions) {
                     <thead>
                         <!-- Filter information rows (included in export) -->
                         <tr class="filter-header">
-                            <td colspan="14">Upcoming Installment Report - Filter Information</td>
+                            <td colspan="15">Upcoming Installment Report - Filter Information</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="3">Branch:</td>
-                            <td colspan="11">${filterOptions.branchName || 'All Branches'}</td>
+                            <td colspan="12">${filterOptions.branchName || 'All Branches'}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="3">Loan Officer:</td>
-                            <td colspan="11">${filterOptions.userName || 'All Officers'}</td>
+                            <td colspan="12">${filterOptions.userName || 'All Officers'}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="3">Loan Product:</td>
-                            <td colspan="11">${filterOptions.productName || 'All Products'}</td>
+                            <td colspan="12">${filterOptions.productName || 'All Products'}</td>
+                        </tr>
+                        <tr class="report-info">
+                            <td colspan="3">From Date:</td>
+                            <td colspan="12">${filterOptions.fromDate || 'Any'}</td>
+                        </tr>
+                        <tr class="report-info">
+                            <td colspan="3">To Date:</td>
+                            <td colspan="12">${filterOptions.toDate || 'Any'}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="3">Report Date:</td>
-                            <td colspan="11">${moment().format('YYYY-MM-DD HH:mm:ss')}</td>
+                            <td colspan="12">${moment().format('YYYY-MM-DD HH:mm:ss')}</td>
                         </tr>
                         <!-- Empty row for spacing -->
                         <tr>
-                            <td colspan="14">&nbsp;</td>
+                            <td colspan="15">&nbsp;</td>
                         </tr>
                         <!-- Data header row -->
                         <tr>
@@ -701,8 +738,9 @@ function generateHtml(upcomingPayments, filterOptions) {
                             <th>Overpayment/Balance</th>
                             <th>Last Transaction Date</th>
                             <th>No of Days in Arrears</th>
+                            <th>RBM Loan Classification</th>
                             <th>Number of Instalments in Arrears</th>
-                            <th>Officer</th>
+                            <th>Loan Officer</th>
                         </tr>
                     </thead>
                     <tbody>

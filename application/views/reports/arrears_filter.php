@@ -46,7 +46,7 @@
                             <select class="form-control" id="officer_id" name="officer_id">
                                 <option value="">All Officers</option>
                                 <?php foreach ($officers as $officer): ?>
-                                    <option value="<?php echo $officer->empid; ?>"><?php echo $officer->Firstname . ' ' . $officer->Lastname; ?></option>
+                                    <option value="<?php echo $officer->id; ?>"><?php echo $officer->Firstname . ' ' . $officer->Lastname; ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </div>

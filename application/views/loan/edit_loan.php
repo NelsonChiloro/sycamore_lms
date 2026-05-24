@@ -1,5 +1,7 @@
 <?php
-$loan_types = $this->Loan_products_model->get_all();
+if (!isset($loan_types) || !is_array($loan_types)) {
+    $loan_types = array();
+}
 $get_settings = get_by_id('settings','settings_id', '1');
 ?>
 

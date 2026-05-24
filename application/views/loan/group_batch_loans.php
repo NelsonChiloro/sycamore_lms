@@ -1,4 +1,4 @@
-<div class="main-content">
+﻿<div class="main-content">
     <div class="page-header">
         <h2 class="header-title">Group Batch Loans - <?php echo $batch; ?></h2>
         <div class="header-sub-title">
@@ -9,6 +9,23 @@
             </nav>
         </div>
     </div>
+
+    <?php if (!empty($pending_batch_edit)): ?>
+    <div class="alert alert-warning alert-dismissible fade show" role="alert">
+        <strong>Group loan edit pending (<?php echo htmlspecialchars($pending_batch_edit->state); ?>).</strong>
+        Changes are not applied until recommendation and approval are complete.
+        <?php if ($pending_batch_edit->state === 'Initiated' && !empty($permissions['can_recommend'])): ?>
+            <a class="alert-link" href="<?php echo base_url('Approval_general/auth_data/') . (int)$pending_batch_edit->approval_edits_id . '/edit_recommend/edit_approve'; ?>">Recommend this edit</a>
+            or open <a class="alert-link" href="<?php echo base_url('loan/edit_recommend'); ?>">Recommend loan edit</a>.
+        <?php elseif ($pending_batch_edit->state === 'recommended' && !empty($permissions['can_approve'])): ?>
+            <a class="alert-link" href="<?php echo base_url('Approval_general/auth_data/') . (int)$pending_batch_edit->approval_edits_id . '/edit_recommend/edit_approve'; ?>">Approve this edit</a>
+            or open <a class="alert-link" href="<?php echo base_url('loan/edit_approve'); ?>">Approve loan edit</a>.
+        <?php else: ?>
+            Awaiting an officer with the correct permission on <a class="alert-link" href="<?php echo base_url('loan/edit_recommend'); ?>">Recommend loan edit</a> / <a class="alert-link" href="<?php echo base_url('loan/edit_approve'); ?>">Approve loan edit</a>.
+        <?php endif; ?>
+        <button type="button" class="close" data-dismiss="alert" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+    </div>
+    <?php endif; ?>
     
     <!-- Batch Summary -->
     <div class="card mb-4">
@@ -51,20 +68,25 @@
                     </button>
                     <?php endif; ?>
                     <?php if($has_approved && $permissions['can_disburse']): ?>
-                    <button class="btn btn-danger mr-2" onclick="disburseBatch('<?php echo $batch; ?>')">
+                    <button class="btn btn-danger mr-2" onclick="openBatchDisburseModal('<?php echo $batch; ?>')">
                         <i class="fas fa-money-bill-wave mr-2"></i>Disburse Batch
+                    </button>
+                    <?php endif; ?>
+                    <?php if(!empty($edit_context) && !empty($permissions['can_edit'])): ?>
+                    <button class="btn btn-info mr-2" onclick="openGroupEditModal()">
+                        <i class="fas fa-edit mr-2"></i>Edit Group Loan
                     </button>
                     <?php endif; ?>
                     <?php if($has_payable && $permissions['can_pay']): ?>
                     <button class="btn btn-success mr-2" onclick="openBatchPaymentModal()">
-                        <i class="fas fa-hand-holding-usd mr-2"></i>Pay Batch
+                        <i class="fas fa-hand-holding-usd mr-2"></i>Group Loan Repayment
                     </button>
                     <?php endif; ?>
-                    <a href="<?php echo base_url('loan/batch_report/').$batch; ?>" class="btn btn-success" target="_blank">
-                        <i class="fas fa-file-pdf mr-2"></i>Print Batch Report
+                    <a href="<?php echo base_url('loan/batch_statement/').rawurlencode($batch).'?run=1'; ?>" class="btn btn-outline-light mr-2" title="View and export batch loan account transactions">
+                        <i class="fas fa-file-invoice mr-2"></i>Batch Statement
                     </a>
-                    <a href="<?php echo base_url('loan/restructure?batch=').urlencode($batch); ?>" class="btn btn-info">
-                        <i class="fas fa-edit mr-2"></i>Restructure Loans
+                    <a href="<?php echo base_url('loan/batch_report/').rawurlencode($batch); ?>" class="btn btn-outline-light mr-2" target="_blank" title="Combined batch summary report">
+                        <i class="fas fa-file-alt mr-2"></i>Batch Summary Report
                     </a>
                 </div>
             </div>
@@ -99,18 +121,81 @@
         </div>
     </div>
 
+    <?php if (!empty($batch_summary)): ?>
+    <div class="card mb-4 group-finance-dashboard">
+        <div class="card-header bg-dark text-white">
+            <h4 class="mb-0"><i class="fas fa-chart-line mr-2"></i>Group Loan Financial Summary</h4>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-4 col-lg-3 mb-3">
+                    <div class="finance-card finance-card-primary">
+                        <div class="finance-label">Total Group Loan Amount</div>
+                        <div class="finance-value">MK <?php echo number_format($batch_summary->total_loan_amount, 2); ?></div>
+                        <small class="text-muted">Principal: MK <?php echo number_format($batch_summary->total_principal, 2); ?></small>
+                    </div>
+                </div>
+                <div class="col-md-4 col-lg-3 mb-3">
+                    <div class="finance-card finance-card-success">
+                        <div class="finance-label">Total Amount Paid</div>
+                        <div class="finance-value">MK <?php echo number_format($batch_summary->total_paid, 2); ?></div>
+                    </div>
+                </div>
+                <div class="col-md-4 col-lg-3 mb-3">
+                    <div class="finance-card finance-card-danger finance-card-highlight">
+                        <div class="finance-label">Outstanding Balance</div>
+                        <div class="finance-value">MK <?php echo number_format($batch_summary->outstanding_balance, 2); ?></div>
+                    </div>
+                </div>
+                <div class="col-md-4 col-lg-3 mb-3">
+                    <div class="finance-card finance-card-info">
+                        <div class="finance-label">Total Interest</div>
+                        <div class="finance-value">MK <?php echo number_format($batch_summary->total_interest, 2); ?></div>
+                    </div>
+                </div>
+                <div class="col-md-4 col-lg-3 mb-3">
+                    <div class="finance-card finance-card-warning">
+                        <div class="finance-label">Total Penalties</div>
+                        <div class="finance-value">MK <?php echo number_format($batch_summary->total_penalties, 2); ?></div>
+                    </div>
+                </div>
+                <div class="col-md-4 col-lg-3 mb-3">
+                    <div class="finance-card finance-card-secondary">
+                        <div class="finance-label">Next Installment Due</div>
+                        <div class="finance-value finance-value-sm">
+                            <?php if (!empty($batch_summary->next_installment_due)): ?>
+                                <?php echo date('M d, Y', strtotime($batch_summary->next_installment_due)); ?>
+                            <?php else: ?>
+                                N/A
+                            <?php endif; ?>
+                        </div>
+                        <?php if (!empty($batch_summary->next_installment_amount)): ?>
+                        <small>MK <?php echo number_format($batch_summary->next_installment_amount, 2); ?></small>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <div class="col-md-4 col-lg-3 mb-3">
+                    <div class="finance-card finance-card-muted">
+                        <div class="finance-label">Loan Status</div>
+                        <div class="finance-value finance-value-sm"><?php echo htmlspecialchars($batch_summary->loan_status_label); ?></div>
+                        <small><?php echo (int)$batch_summary->member_count; ?> member loan(s)</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
+
     <!-- Individual Loan Details -->
     <?php 
     $loan_counter = 1;
-    foreach ($loans as $loan): 
-        // Calculate payment schedule totals
-        $this->db->select('
-            SUM(CASE WHEN status = "PAID" THEN amount ELSE 0 END) as total_paid,
-            SUM(CASE WHEN status = "NOT PAID" THEN amount ELSE 0 END) as total_outstanding,
-            COUNT(*) as total_payments
-        ');
-        $this->db->where('loan_id', $loan->loan_id);
-        $payment_summary = $this->db->get('payement_schedules')->row();
+    foreach ($loans as $loan):
+        $payment_balance = isset($loan->payment_balance) ? $loan->payment_balance : null;
+        $payment_summary = (object) array(
+            'total_payments' => isset($loan->schedule_count) ? (int) $loan->schedule_count : 0,
+            'total_paid' => $payment_balance ? (float) $payment_balance->total_paid : 0.0,
+            'total_outstanding' => $payment_balance ? (float) $payment_balance->remaining_balance : 0.0,
+        );
     ?>
     
     <!-- Loan Section LOAN <?php echo $loan->loan_number; ?> -->
@@ -235,9 +320,6 @@
                     <div class="mt-3">
                         <a href="<?php echo base_url('loan/view/').$loan->loan_id; ?>" class="btn btn-primary btn-sm">
                             <i class="fas fa-eye mr-1"></i>View Details
-                        </a>
-                        <a href="<?php echo base_url('loan/report/').$loan->loan_id; ?>" class="btn btn-info btn-sm" target="_blank">
-                            <i class="fas fa-file-pdf mr-1"></i>Print Report
                         </a>
                         <button class="btn btn-warning btn-sm" onclick="toggleAmortization(<?php echo $loan->loan_id; ?>)">
                             <i class="fas fa-table mr-1"></i>View Amortization
@@ -494,14 +576,99 @@
     </div>
 </div>
 
+<!-- Batch Disburse Modal -->
+<div aria-hidden="true" class="onboarding-modal modal fade" id="batch_disburse_modal" role="dialog" tabindex="-1">
+    <div class="modal-dialog modal-centered" role="document">
+        <div class="modal-content text-center">
+            <button style="float: right;" aria-label="Close" class="close" data-dismiss="modal" type="button"><span class="close-label">Close</span><span class="anticon anticon-close"></span></button>
+            <div class="onboarding-content" style="padding: 1em;">
+                <h4 class="onboarding-title">Disburse batch</h4>
+                <p>Batch: <strong id="batch_disburse_label"></strong></p>
+                <p style="color: #555;">This will disburse all APPROVED loans in the batch.</p>
+                <div class="form-group text-left">
+                    <label for="batch_disbursement_date"><strong>Disbursement date</strong></label>
+                    <input type="date" class="form-control" id="batch_disbursement_date" name="disbursement_date">
+                    <small class="form-text text-muted">Leave blank to use today's date.</small>
+                </div>
+                <input type="hidden" id="batch_disburse_number" value="">
+                <button type="button" class="btn btn-danger btn-block mt-3" id="confirm_batch_disburse_btn" onclick="confirmBatchDisburse()">Disburse batch</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<?php if (!empty($edit_context)): ?>
+<div aria-hidden="true" class="onboarding-modal modal fade" id="group_edit_modal" role="dialog" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-centered" role="document">
+        <div class="modal-content text-left">
+            <button style="float: right;" aria-label="Close" class="close" data-dismiss="modal" type="button"><span class="close-label">Close</span><span class="anticon anticon-close"></span></button>
+            <div class="onboarding-content" style="padding: 1em;">
+                <h4 class="onboarding-title">Edit Group Loan â€” <?php echo htmlspecialchars($batch); ?></h4>
+                <p class="text-muted">Uses the same edit engine as individual loans. All members update after approval; repayments are preserved.</p>
+                <form method="post" action="<?php echo base_url('loan/batch_edit_action'); ?>">
+                    <input type="hidden" name="batch" value="<?php echo htmlspecialchars($batch); ?>">
+                    <div class="form-row">
+                        <div class="form-group col-md-6">
+                            <label><strong>Loan product</strong></label>
+                            <select name="loan_type" class="form-control" required>
+                                <?php foreach ($loan_types as $lt): ?>
+                                    <option value="<?php echo (int)$lt->loan_product_id; ?>" <?php echo ((int)$edit_context->loan_product_id === (int)$lt->loan_product_id) ? 'selected' : ''; ?>><?php echo htmlspecialchars($lt->product_name); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="form-group col-md-3">
+                            <label><strong>Repayment period</strong></label>
+                            <input type="number" name="months" class="form-control" min="1" value="<?php echo (int)$edit_context->loan_period; ?>" required>
+                        </div>
+                        <div class="form-group col-md-3">
+                            <label><strong>Frequency</strong></label>
+                            <input type="text" name="period_type" class="form-control" value="<?php echo htmlspecialchars($edit_context->period_type); ?>">
+                        </div>
+                        <div class="form-group col-md-4">
+                            <label><strong>Loan / disbursement date</strong></label>
+                            <input type="date" name="loan_date" class="form-control" value="<?php echo htmlspecialchars(date('Y-m-d', strtotime($edit_context->loan_date))); ?>" required>
+                        </div>
+                        <div class="form-group col-md-4">
+                            <label><strong>Loan officer</strong></label>
+                            <select name="user" class="form-control" required>
+                                <?php foreach ($officers as $officer): ?>
+                                    <option value="<?php echo (int)$officer->id; ?>" <?php echo ((int)$edit_context->loan_added_by === (int)$officer->id) ? 'selected' : ''; ?>><?php echo htmlspecialchars($officer->Firstname . ' ' . $officer->Lastname); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="form-group col-md-12">
+                            <label><strong>Notes / narration</strong></label>
+                            <textarea name="narration" class="form-control" rows="2"><?php echo htmlspecialchars((string)$edit_context->narration); ?></textarea>
+                        </div>
+                    </div>
+                    <table class="table table-bordered table-sm mt-2">
+                        <thead class="thead-light"><tr><th>Member</th><th>Loan #</th><th>Principal (MWK)</th></tr></thead>
+                        <tbody>
+                            <?php foreach ($edit_context->members as $member): ?>
+                            <tr>
+                                <td><?php echo htmlspecialchars($member->member_name); ?></td>
+                                <td><?php echo htmlspecialchars($member->loan_number); ?></td>
+                                <td><input type="text" class="form-control" name="member_amounts[<?php echo (int)$member->loan_id; ?>]" value="<?php echo number_format($member->loan_principal, 2, '.', ''); ?>" required></td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    <button type="submit" class="btn btn-primary btn-block mt-3" onclick="return confirm('Submit group loan edit for approval?');">Submit group edit for approval</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
 <!-- Group Batch Payment Modal -->
 <div aria-hidden="true" class="onboarding-modal modal fade" id="group_batch_payment_modal" role="dialog" tabindex="-1">
     <div class="modal-dialog modal-xl modal-centered" role="document">
         <div class="modal-content text-left">
             <span></span><button style="float: right;" aria-label="Close" class="close" data-dismiss="modal" type="button"><span class="close-label">Close</span><span class="anticon anticon-close"></span></button>
             <div class="onboarding-content" style="padding: 1em;">
-                <h4 class="onboarding-title">Pay Batch - <?php echo $batch; ?></h4>
-                <p style="color: #555;">Enter the group's total deposited amount, one shared Transaction ID/Receipt Number, and distribute the amount to members below.</p>
+                <h4 class="onboarding-title">Group Loan Repayment — <?php echo $batch; ?></h4>
+                <p style="color: #555;">Enter payment details once, then allocate the total across members. Allocation must equal the deposited amount.</p>
                 <form class="form-row" id="group_batch_payment_form" method="POST" action="<?php echo base_url('loan/batch_pay'); ?>" onsubmit="doSubmitBatchPayment(); return false;">
                     <input type="hidden" name="batch" value="<?php echo $batch; ?>">
                     <div class="form-group col-md-4">
@@ -518,10 +685,10 @@
                     </div>
                     <div class="form-group col-md-4">
                         <label for="group_batch_pdate"><strong>Payment Date</strong></label>
-                        <input type="datetime-local" class="form-control" name="pdate" id="group_batch_pdate" />
+                        <input type="date" class="form-control" name="pdate" id="group_batch_pdate" />
                     </div>
                     <div class="form-group col-md-12 mt-2">
-                        <label id="group_batch_ref_label" for="group_batch_payment_reference"><strong>Reference Number <span style="color:red;">*</span></strong></label>
+                        <label id="group_batch_ref_label" for="group_batch_payment_reference"><strong>Transaction / Receipt Number <span style="color:red;">*</span></strong></label>
                         <div class="input-group">
                             <input type="text" class="form-control" name="payment_reference" id="group_batch_payment_reference"
                                    placeholder="Enter Transaction ID or Receipt Number" required
@@ -538,51 +705,44 @@
                             <table class="table table-bordered table-striped" id="group-batch-allocation-table">
                                 <thead class="table-light">
                                     <tr>
-                                        <th>Loan #</th>
-                                        <th>Member</th>
-                                        <th>Outstanding (MWK)</th>
-                                        <th>Amount to Pay (MWK)</th>
+                                        <th>Member Name</th>
+                                        <th>Loan Number</th>
+                                        <th>Outstanding Balance</th>
+                                        <th>Installment Due</th>
+                                        <th>Amount to Repay (MWK)</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <?php foreach ($loans as $batch_loan): ?>
-                                        <?php if (strtoupper(trim($batch_loan->loan_status)) == 'ACTIVE'): ?>
-                                            <?php
-                                            $this->db->select('SUM(amount - paid_amount) as outstanding');
-                                            $this->db->from('payement_schedules');
-                                            $this->db->where('loan_id', $batch_loan->loan_id);
-                                            $this->db->where('status', 'NOT PAID');
-                                            $batch_outstanding = $this->db->get()->row();
-                                            $member_outstanding = (float)($batch_outstanding && $batch_outstanding->outstanding ? $batch_outstanding->outstanding : 0);
-                                            ?>
+                                    <?php
+                                    $repayment_rows = isset($repayment_members) ? $repayment_members : array();
+                                    foreach ($repayment_rows as $member_row):
+                                    ?>
                                             <tr>
-                                                <td><strong><?php echo $batch_loan->loan_number; ?></strong></td>
-                                                <?php
-                                                $display_member_name = !empty($batch_loan->member_name) ? (string)$batch_loan->member_name : trim((string)$batch_loan->Firstname . ' ' . (string)$batch_loan->Lastname);
-                                                if ($display_member_name === '') {
-                                                    $display_member_name = !empty($batch_loan->customer_group_name) ? $batch_loan->customer_group_name : ('Customer #' . $batch_loan->loan_customer);
-                                                }
-                                                ?>
-                                                <td><?php echo $display_member_name; ?></td>
-                                                <td class="text-danger"><strong>MK <?php echo number_format($member_outstanding, 2); ?></strong></td>
+                                                <td><?php echo htmlspecialchars($member_row->member_name); ?></td>
+                                                <td><strong><?php echo htmlspecialchars($member_row->loan_number); ?></strong></td>
+                                                <td class="text-danger"><strong>MK <?php echo number_format($member_row->outstanding, 2); ?></strong></td>
+                                                <td>
+                                                    MK <?php echo number_format($member_row->installment_due, 2); ?>
+                                                    <?php if (!empty($member_row->installment_date)): ?>
+                                                        <br><small class="text-muted"><?php echo date('M d, Y', strtotime($member_row->installment_date)); ?></small>
+                                                    <?php endif; ?>
+                                                </td>
                                                 <td>
                                                     <input
                                                         type="number"
                                                         class="form-control batch-member-amount"
-                                                        name="allocations[<?php echo $batch_loan->loan_id; ?>]"
+                                                        name="allocations[<?php echo (int)$member_row->loan_id; ?>]"
                                                         step="0.01"
                                                         min="0"
-                                                        max="<?php echo number_format($member_outstanding, 2, '.', ''); ?>"
-                                                        data-loan-number="<?php echo $batch_loan->loan_number; ?>"
-                                                        data-outstanding="<?php echo number_format($member_outstanding, 2, '.', ''); ?>"
+                                                        max="<?php echo number_format($member_row->outstanding, 2, '.', ''); ?>"
+                                                        data-loan-number="<?php echo htmlspecialchars($member_row->loan_number); ?>"
+                                                        data-outstanding="<?php echo number_format($member_row->outstanding, 2, '.', ''); ?>"
                                                         oninput="updateBatchAllocationTotals()"
                                                         onchange="updateBatchAllocationTotals()"
-                                                        onkeyup="updateBatchAllocationTotals()"
                                                         placeholder="0.00"
                                                     >
                                                 </td>
                                             </tr>
-                                        <?php endif; ?>
                                     <?php endforeach; ?>
                                 </tbody>
                             </table>
@@ -594,15 +754,17 @@
                         <div id="batch-debug-alert" class="alert alert-warning" style="display:none;"></div>
                         <div id="batch-status-alert" class="alert alert-info" style="display:none;"></div>
                         <div class="alert alert-info mb-2">
-                            <strong>Total Entered for Members:</strong> <span id="batch-allocated-total">MWK 0.00</span>
+                            <strong>Total Allocated:</strong> <span id="batch-allocated-total">MK 0.00</span>
+                            | <strong>Deposited:</strong> <span id="batch-total-deposited-display">MK 0.00</span>
+                            | <strong>Difference:</strong> <span id="batch-allocation-difference">MK 0.00</span>
                         </div>
                         <div class="alert alert-secondary mb-0">
-                            Payment will proceed only when the sum of member amounts exactly matches the total deposited amount.
+                            Allocated repayment amount must equal total deposited amount (difference must be MK 0.00).
                         </div>
                     </div>
 
                     <div class="col-12 mt-3">
-                        <button class="btn btn-danger btn-block" type="button" id="submit_group_batch_payment" onclick="doSubmitBatchPayment()">Submit Batch Payment</button>
+                        <button class="btn btn-danger btn-block" type="button" id="submit_group_batch_payment" onclick="doSubmitBatchPayment()" style="display:none;">Submit Group Repayment</button>
                     </div>
                 </form>
             </div>
@@ -672,6 +834,73 @@
 .stat-card h3 {
     margin: 0;
     font-weight: 700;
+}
+
+.group-finance-dashboard .finance-card {
+    border-radius: 10px;
+    padding: 1rem 1.1rem;
+    height: 100%;
+    border: 1px solid #e3e6f0;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+.finance-label {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6c757d;
+    margin-bottom: 0.35rem;
+}
+
+.finance-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #2e384d;
+}
+
+.finance-value-sm {
+    font-size: 1rem;
+}
+
+.finance-card-highlight {
+    border: 2px solid #e74a3b;
+    background: linear-gradient(135deg, #fff5f5 0%, #ffffff 100%);
+}
+
+.finance-card-highlight .finance-value {
+    color: #c0392b;
+}
+
+.finance-card-primary { border-left: 4px solid #4e73df; }
+.finance-card-success { border-left: 4px solid #1cc88a; }
+.finance-card-danger { border-left: 4px solid #e74a3b; }
+.finance-card-info { border-left: 4px solid #36b9cc; }
+.finance-card-warning { border-left: 4px solid #f6c23e; }
+.finance-card-secondary { border-left: 4px solid #858796; }
+.finance-card-muted { border-left: 4px solid #d1d3e2; }
+
+.allocation-summary-box {
+    background: #f8f9fc;
+    border: 1px solid #e3e6f0;
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    text-align: center;
+}
+
+.allocation-summary-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    color: #6c757d;
+}
+
+.allocation-summary-value {
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+
+.allocation-summary-diff .allocation-summary-value {
+    color: #e74a3b;
 }
 
 .badge-lg {
@@ -1018,28 +1247,37 @@ function approveBatch(batchNumber) {
     });
 }
 
-function disburseBatch(batchNumber) {
+function openBatchDisburseModal(batchNumber) {
+    $('#batch_disburse_number').val(batchNumber);
+    $('#batch_disburse_label').text(batchNumber);
+    $('#batch_disbursement_date').val('');
+    $('#batch_disburse_modal').modal('show');
+}
+
+function confirmBatchDisburse() {
+    const batchNumber = $('#batch_disburse_number').val();
+    const disbursementDate = $('#batch_disbursement_date').val();
+
     if (!confirm('Are you sure you want to disburse ALL APPROVED loans in batch ' + batchNumber + '? This action will:\n- Change status to ACTIVE\n- Create payment schedules\n- Process cash transactions\n- Send SMS notifications (if enabled)\n\nThis action cannot be undone.')) {
         return;
     }
-    
-    // Show loading state
-    const button = event.target;
+
+    const button = document.getElementById('confirm_batch_disburse_btn');
     const originalText = button.innerHTML;
     button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Processing...';
     button.disabled = true;
-    
+
     $.ajax({
         url: '<?php echo base_url("loan/batch_disburse"); ?>',
         type: 'POST',
         data: {
-            batch: batchNumber
+            batch: batchNumber,
+            disbursement_date: disbursementDate
         },
         dataType: 'json',
         success: function(response) {
             if (response.success) {
                 alert('Success: ' + response.message);
-                // Refresh the page to show updated statuses
                 location.reload();
             } else {
                 alert('Error: ' + response.message);
@@ -1050,7 +1288,6 @@ function disburseBatch(batchNumber) {
             console.error('AJAX Error:', error);
         },
         complete: function() {
-            // Restore button state
             button.innerHTML = originalText;
             button.disabled = false;
         }
@@ -1142,31 +1379,40 @@ function updateBatchAllocationTotals() {
     totalDeposited = roundToTwo(totalDeposited);
 
     $('#batch-allocated-total').text(formatBatchMoney(allocated));
+    $('#batch-total-deposited-display').text(formatBatchMoney(totalDeposited));
 
-    var diff = Math.abs(allocated - totalDeposited);
+    var diff = roundToTwo(totalDeposited - allocated);
+    $('#batch-allocation-difference').text(formatBatchMoney(diff));
+
     var submitButton = $('#submit_group_batch_payment');
     var alertBox = $('#batch-sum-alert');
+    var canSubmit = true;
 
     if (hasExceededOutstanding) {
         alertBox.text('Amount entered for loan ' + exceededLoan + ' exceeds its outstanding balance.').show();
-        submitButton.prop('disabled', true);
-        return;
+        canSubmit = false;
+    } else if (totalDeposited <= 0) {
+        alertBox.text('Please enter the total deposited amount.').show();
+        canSubmit = false;
+    } else if (Math.abs(diff) > 0.01) {
+        alertBox.text('Allocated repayment amount must equal total deposited amount.').show();
+        canSubmit = false;
+    } else if (allocated <= 0) {
+        alertBox.text('Enter at least one member allocation amount.').show();
+        canSubmit = false;
+    } else {
+        alertBox.hide();
     }
 
-    if (totalDeposited <= 0 && allocated > 0) {
-        alertBox.text('Please enter the total deposited amount at the top.').show();
-        submitButton.prop('disabled', true);
-        return;
+    if (canSubmit) {
+        submitButton.prop('disabled', false).show();
+    } else {
+        submitButton.prop('disabled', true).hide();
     }
+}
 
-    if (allocated > 0 && diff > 0.01) {
-        alertBox.text('Sum mismatch: Total deposited is ' + formatBatchMoney(totalDeposited) + ' but member allocations add up to ' + formatBatchMoney(allocated) + '.').show();
-        submitButton.prop('disabled', true);
-        return;
-    }
-
-    alertBox.hide();
-    submitButton.prop('disabled', false);
+function openGroupEditModal() {
+    $('#group_edit_modal').modal('show');
 }
 
 function showBatchStatus(message, type) {
@@ -1299,4 +1545,5 @@ $(document).ready(function() {
         }
     });
 });
+
 </script>

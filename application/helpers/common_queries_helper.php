@@ -227,6 +227,76 @@ function get_by_id($table,$key,$value){
 
 }
 
+/**
+ * Resolve a branches row when loan.branch may store branches.id, Code, or BranchCode.
+ *
+ * @param mixed $branch_value Value from loan.branch
+ * @return object|null branches row
+ */
+/**
+ * RBM Loan Classification from days in arrears (RBM Classification Status Report rules).
+ */
+function determine_rbm_classification($days_in_arrears)
+{
+    $days = (int) $days_in_arrears;
+    if ($days < 30) {
+        return 'Standard';
+    }
+    if ($days < 60) {
+        return 'Special Mention';
+    }
+    if ($days < 90) {
+        return 'Substandard';
+    }
+    if ($days < 180) {
+        return 'Doubtful';
+    }
+    return 'Loss';
+}
+
+/**
+ * SQL: max days in arrears from unpaid past-due installments.
+ */
+function sql_loan_days_in_arrears_expr($loan_alias = 'loan')
+{
+    return "COALESCE((
+        SELECT MAX(DATEDIFF(CURDATE(), ps.payment_schedule))
+        FROM payement_schedules ps
+        WHERE ps.loan_id = {$loan_alias}.loan_id
+          AND ps.status = 'NOT PAID'
+          AND ps.payment_schedule < CURDATE()
+    ), 0)";
+}
+
+/**
+ * SQL: RBM classification label for a loan row.
+ */
+function sql_loan_rbm_classification_expr($loan_alias = 'loan')
+{
+    $days_expr = sql_loan_days_in_arrears_expr($loan_alias);
+    return "CASE
+        WHEN ({$days_expr}) < 30 THEN 'Standard'
+        WHEN ({$days_expr}) < 60 THEN 'Special Mention'
+        WHEN ({$days_expr}) < 90 THEN 'Substandard'
+        WHEN ({$days_expr}) < 180 THEN 'Doubtful'
+        ELSE 'Loss'
+    END";
+}
+
+function get_branch_for_loan_value($branch_value)
+{
+    if ($branch_value === null || $branch_value === '') {
+        return null;
+    }
+
+    $ci =& get_instance();
+    $ci->load->database();
+    $escaped = $ci->db->escape($branch_value);
+    $sql = "SELECT * FROM branches WHERE id = {$escaped} OR Code = {$escaped} OR BranchCode = {$escaped} LIMIT 1";
+    $query = safe_db_query($sql);
+    return $query ? $query->row() : null;
+}
+
 function get_paid_date($table,$key1,$key2){
 
 
@@ -1042,29 +1112,23 @@ function loan_collection($loan){
 }
 
 function get_loan_outstanding_balance($loan_id) {
-    // Get CI instance
     $CI =& get_instance();
 
-    // Load database if not already loaded
     if (!isset($CI->db)) {
         $CI->load->database();
     }
 
-    // Get sum of all scheduled amounts and paid amounts for this loan
-    $query = $CI->db->select('SUM(amount) as total_amount, SUM(paid_amount) as total_paid')
-        ->from('payement_schedules')  // Replace with your actual payment schedules table name
-        ->where('loan_id', $loan_id)
-        ->get();
-
-    if ($query->num_rows() == 0) {
-        return 0; // No payment schedules found for this loan
+    $CI->load->model('Payement_schedules_model');
+    $payments = $CI->Payement_schedules_model->get_all_by_id($loan_id);
+    if (empty($payments)) {
+        return 0;
     }
 
-    $result = $query->row();
+    $loan = $CI->db->select('loan_amount_total')->from('loan')->where('loan_id', $loan_id)->get()->row();
+    $summary = $CI->Payement_schedules_model->summarize_loan_balances(
+        $payments,
+        $loan ? $loan->loan_amount_total : null
+    );
 
-    // Calculate outstanding balance (total amount - total paid)
-    $outstanding_balance = $result->total_amount - $result->total_paid;
-
-    // Return the outstanding balance (ensure it's not negative)
-    return max(0, $outstanding_balance);
+    return $summary->remaining_balance;
 }

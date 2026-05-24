@@ -11,6 +11,8 @@
 	</div>
 	<div class="card">
 		<div class="card-body" style="border: thick #24C16B solid;border-radius: 14px;">
+            <?php if (!empty($show_loan_filters)) { $this->load->view('loan/_loan_list_filters'); } ?>
+            <hr>
             <div style="overflow-y: auto"">
 			<table  id="data-table" class="tableCss">
 				<thead>
@@ -31,29 +33,19 @@
 
 					<th>Loan Status</th>
                     <th>Branch</th>
+                    <th>RBM Loan Classification</th>
 					<th>Loan Added Date</th>
 					<th>Action</th>
 
 				</tr>
 				</thead>
 				<tbody><?php
-				$n = 1;
+				$n = isset($list_offset) ? ($list_offset + 1) : 1;
 
 				foreach ($loan_data as $loan)
 				{
-                    if($loan->customer_type=='group'){
-                        $group = $this->Groups_model->get_by_id($loan->loan_customer);
-
-                        $customer_name = $group->group_name.'('.$group->group_code.')';
-                        $preview_url = "Customer_groups/members/";
-                    }elseif($loan->customer_type=='individual'){
-                        $indi = $this->Individual_customers_model->get_by_id($loan->loan_customer);
-                        $customer_name = $indi->Firstname.' '.$indi->Lastname;
-                        $preview_url = "Individual_customers/view/";
-                    }
-
-
-					$branch = get_by_id('branches','id',$loan->branch);
+                    $preview_url = ($loan->customer_type == 'group') ? 'Customer_groups/members/' : 'Individual_customers/view/';
+                    $customer_name = !empty($loan->customer_display_name) ? $loan->customer_display_name : (!empty($loan->customer_nam) ? $loan->customer_nam : 'Unknown');
 					?>
 					<tr>
 
@@ -70,7 +62,8 @@
 						<td><a href="<?php echo base_url('uploads/').$loan->worthness_file?>" download >Download file <i class="fa fa-download fa-flip"></i></a></td>
 
 						<td><?php echo $loan->loan_status ?></td>
-						<td><?php echo $branch ? $branch->BranchName : 'N/A'; ?></td>
+						<td><?php echo !empty($loan->branch_display_name) ? htmlspecialchars($loan->branch_display_name) : 'N/A'; ?></td>
+						<td><?php echo !empty($loan->rbm_classification) ? htmlspecialchars($loan->rbm_classification) : 'Standard'; ?></td>
 						<td><?php echo $loan->loan_added_date ?></td>
 						<td><a href="<?php echo base_url('loan/repayment_view_pay_off/').$loan->loan_id?>">Pay off</a></td>
 
@@ -82,6 +75,7 @@
 				</tbody>
 			</table>
         </div>
+        <?php $this->load->view('loan/_loan_list_pagination'); ?>
 		</div>
 	</div>
 </div>

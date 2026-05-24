@@ -1,5 +1,5 @@
 // loanPortfolioReport.js - Enhanced with country join and removed village
-const { query } = require('./databaseHelpers');
+const { query, sqlBranchJoin, determineRBMClassification } = require('./databaseHelpers');
 const moment = require('moment');
 const util = require('util');
 const fs = require('fs');
@@ -127,15 +127,19 @@ async function generateLoanPortfolioWriteOffReport(options, reportId, reportTrac
                 geo_countries gc ON ic.Country = gc.code
                 LEFT JOIN
                 \`groups\` g ON loan.loan_customer = g.group_id AND loan.customer_type = 'group'
-                LEFT JOIN
-                branches b ON loan.branch = b.id
+                ${sqlBranchJoin('loan', 'b')}
             WHERE
                 loan.loan_status IN ('WRITTEN_OFF')
         `;
 
         // Add filters
         if (branch !== 'All') {
-            sql += ` AND loan.branch = '${branch}'`;
+            const branchEsc = String(branch).replace(/'/g, "''");
+            sql += ` AND (
+                loan.branch = '${branchEsc}'
+                OR loan.branch IN (SELECT Code FROM branches WHERE id = '${branchEsc}')
+                OR loan.branch IN (SELECT BranchCode FROM branches WHERE id = '${branchEsc}')
+            )`;
         }
 
         if (status !== 'All') {
@@ -151,7 +155,11 @@ async function generateLoanPortfolioWriteOffReport(options, reportId, reportTrac
         }
 
         if (from && to) {
-            sql += ` AND loan.loan_added_date BETWEEN '${formatDate(from)}' AND '${formatDate(to)}'`;
+            sql += ` AND DATE(loan.loan_added_date) BETWEEN '${formatDate(from)}' AND '${formatDate(to)}'`;
+        } else if (from) {
+            sql += ` AND DATE(loan.loan_added_date) >= '${formatDate(from)}'`;
+        } else if (to) {
+            sql += ` AND DATE(loan.loan_added_date) <= '${formatDate(to)}'`;
         }
 
         sql += ` ORDER BY loan.loan_id DESC`;
@@ -218,7 +226,8 @@ async function generateLoanPortfolioWriteOffReport(options, reportId, reportTrac
                 const arrearsResult = await query(arrearsQuery, [loan.loan_id]);
 
                 loan.amount_in_arrears = arrearsResult[0]?.amount_in_arrears || 0;
-                loan.days_in_arrears = arrearsResult[0]?.days_in_arrears || 0;
+                loan.days_in_arrears = parseInt(arrearsResult[0]?.days_in_arrears || 0, 10);
+                loan.rbm_classification = determineRBMClassification(loan.days_in_arrears);
             } catch (error) {
                 console.error(`Error calculating arrears for loan ${loan.loan_id}:`, error);
                 loan.amount_in_arrears = 0;
@@ -427,6 +436,7 @@ function generateHTML(loanData) {
             <th>Principal In Arrears (MWK)</th>
             <th>Amount In Arrears (MWK)</th>
             <th>Days In Arrears</th>
+            <th>RBM Loan Classification</th>
             <th>Last Credit Trx Date</th>
             <th>Collateral Value (MWK)</th>
             <th>Effective Date</th>
@@ -518,6 +528,7 @@ function generateHTML(loanData) {
         <td class="text-right">0.00</td>
         <td class="text-right">${formatNumber(amountInArrears)}</td>
         <td class="text-right">${daysInArrears}</td>
+        <td>${loan.rbm_classification || determineRBMClassification(daysInArrears)}</td>
         <td>${formatDisplayDate(loan.last_credit_date)}</td>
         <td class="text-right">${formatNumber(collateralValue)}</td>
         <td>${formatDisplayDate(loan.loan_date)}</td>

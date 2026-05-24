@@ -1,4 +1,5 @@
 const moment = require('moment');
+const { determineRBMClassification } = require('./databaseHelpers');
 
 /**
  * Generate Arrears Report HTML
@@ -34,8 +35,16 @@ async function generateArrearsReport(filterOptions, reportId, reportTrackers, db
                     b.BranchName,
                     e.Firstname as officer_firstname,
                     e.Lastname as officer_lastname,
-                    ps.interest + ps.padmin_fee + ps.ploan_cover as loan_charges,
-                    MAX(ps.payment_schedule) as due_date,
+                    SUM(CASE
+                        WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE()
+                            THEN (COALESCE(ps.interest, 0) + COALESCE(ps.padmin_fee, 0) + COALESCE(ps.ploan_cover, 0))
+                        ELSE 0
+                    END) as loan_charges,
+                    MIN(CASE
+                        WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE()
+                            THEN ps.payment_schedule
+                        ELSE NULL
+                    END) as due_date,
                     SUM(CASE WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE() THEN 1 ELSE 0 END) as num_missed_payments,
                     SUM(CASE WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE() THEN (ps.amount - ps.paid_amount) ELSE 0 END) as total_arrears,
                     MAX(ps.paid_date) as last_transaction_date,
@@ -51,10 +60,16 @@ async function generateArrearsReport(filterOptions, reportId, reportTrackers, db
 
             let queryParams = [];
 
-            // Add filters - use disbursed_date when available (actual disbursement) else loan_date
+            // Add date filters - support full range and one-sided filtering
             if (filterOptions.start_date && filterOptions.end_date) {
                 query += ` AND COALESCE(DATE(l.disbursed_date), l.loan_date) BETWEEN ? AND ?`;
                 queryParams.push(filterOptions.start_date, filterOptions.end_date);
+            } else if (filterOptions.start_date) {
+                query += ` AND COALESCE(DATE(l.disbursed_date), l.loan_date) >= ?`;
+                queryParams.push(filterOptions.start_date);
+            } else if (filterOptions.end_date) {
+                query += ` AND COALESCE(DATE(l.disbursed_date), l.loan_date) <= ?`;
+                queryParams.push(filterOptions.end_date);
             }
 
             if (filterOptions.officer_id && filterOptions.officer_id !== 'All') {
@@ -215,6 +230,7 @@ async function generateArrearsHTML(loans, filterOptions, reportId, reportTracker
                 <th>Total Arrears (MWK)</th>
                 <th>Last Transaction</th>
                 <th>Days in Arrears</th>
+                <th>RBM Loan Classification</th>
                 <th>Risk Level</th>
                 <th>Loan Officer</th>
                 <th>Branch</th>
@@ -260,6 +276,7 @@ async function generateArrearsHTML(loans, filterOptions, reportId, reportTracker
 
                 // Determine risk level and CSS class
                 const arrearDays = parseInt(loan.arrear_days || 0);
+                const rbmClassification = determineRBMClassification(arrearDays);
                 let riskLevel = '';
                 let rowClass = '';
                 
@@ -290,6 +307,7 @@ async function generateArrearsHTML(loans, filterOptions, reportId, reportTracker
                 <td class="amount">${parseFloat(loan.total_arrears || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
                 <td>${loan.last_transaction_date ? moment(loan.last_transaction_date).format('MMM DD, YYYY') : 'No Payment'}</td>
                 <td class="days">${arrearDays}</td>
+                <td>${rbmClassification}</td>
                 <td>${riskLevel}</td>
                 <td>${loan.officer_firstname || ''} ${loan.officer_lastname || ''}</td>
                 <td>${loan.BranchName || 'N/A'}</td>
@@ -307,7 +325,7 @@ async function generateArrearsHTML(loans, filterOptions, reportId, reportTracker
                 <td colspan="4"></td>
                 <td class="days">${loans.reduce((sum, loan) => sum + parseInt(loan.num_missed_payments || 0), 0)}</td>
                 <td class="amount">${totalArrears.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
-                <td colspan="5"></td>
+                <td colspan="6"></td>
             </tr>
         </tfoot>
     </table>

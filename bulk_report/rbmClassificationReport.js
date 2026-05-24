@@ -1,6 +1,7 @@
 const moment = require('moment');
 const fs = require('fs');
 const path = require('path');
+const { sqlBranchJoin, determineRBMClassification } = require('./databaseHelpers');
 /**
  * Generate an RBM Loan Classification Report HTML
  *
@@ -53,8 +54,12 @@ async function generateRBMClassificationReport(filterOptions, reportId, reportTr
 
         // Apply branch filter if not 'All'
         if (filterOptions.branch && filterOptions.branch !== 'All') {
-            whereConditions.push('l.branch = ?');
-            params.push(filterOptions.branch);
+            whereConditions.push(`(
+                l.branch = ?
+                OR l.branch IN (SELECT Code FROM branches WHERE id = ?)
+                OR l.branch IN (SELECT BranchCode FROM branches WHERE id = ?)
+            )`);
+            params.push(filterOptions.branch, filterOptions.branch, filterOptions.branch);
         }
 
         // Apply loan officer filter if not 'All'
@@ -89,7 +94,7 @@ async function generateRBMClassificationReport(filterOptions, reportId, reportTr
             FROM loan l
             LEFT JOIN loan_products p ON l.loan_product = p.loan_product_id
             LEFT JOIN employees e ON l.loan_added_by = e.id
-            LEFT JOIN branches b ON l.branch = b.id
+            ${sqlBranchJoin('l', 'b')}
             ${whereClause}
         `;
 
@@ -320,26 +325,6 @@ async function getCustomerName(db, customerId, customerType) {
             );
         }
     });
-}
-
-/**
- * Determine RBM classification based on days in arrears
- *
- * @param {number} daysInArrears - Number of days in arrears
- * @returns {string} - RBM classification
- */
-function determineRBMClassification(daysInArrears) {
-    if (daysInArrears < 30) {
-        return 'Standard';
-    } else if (daysInArrears >= 30 && daysInArrears < 60) {
-        return 'Special Mention';
-    } else if (daysInArrears >= 60 && daysInArrears < 90) {
-        return 'Substandard';
-    } else if (daysInArrears >= 90 && daysInArrears < 180) {
-        return 'Doubtful';
-    } else {
-        return 'Loss';
-    }
 }
 
 /**

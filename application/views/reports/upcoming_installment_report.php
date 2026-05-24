@@ -54,6 +54,10 @@ $branches = get_all('branches');
                             }
                             ?>
                         </select>
+                        From Date:
+                        <input type="date" name="from_date" id="from_date" value="<?php echo isset($selected_from_date) ? $selected_from_date : ''; ?>">
+                        To Date:
+                        <input type="date" name="to_date" id="to_date" value="<?php echo isset($selected_to_date) ? $selected_to_date : ''; ?>">
                         <button type="submit" class="btn btn-primary">Generate Report</button>
                     </div>
                 </fieldset>

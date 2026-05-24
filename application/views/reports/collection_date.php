@@ -115,15 +115,13 @@ $products = get_all('loan_products');
 				?>
 				</tbody>
 				<tfoot>
-				<th></th>
-				<th></th>
-				<th></th>
-				<th></th>
-				<th></th>
-				<th></th>
+				<tr>
+				<th colspan="7" style="text-align:right;">Total</th>
+				<th class="collection-total-cell">MK<?php echo number_format($totals,2)?></th>
                 <th></th>
-				<th>MK<?php echo number_format($totals,2)?></th>
-                <th></th>
+				<th></th>
+				<th></th>
+				</tr>
 				</tfoot>
 			</table>
 		</div>

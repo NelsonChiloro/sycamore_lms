@@ -1,9 +1,26 @@
 const moment = require('moment');
 const fs = require('fs');
 const path = require('path');
+const { sqlBranchJoin, appendBranchFilter, determineRBMClassification } = require('./databaseHelpers');
 
 // PAR Constants
 const PAR_THRESHOLDS = [1, 30, 60, 90];
+
+function normalizeParDateInput(value) {
+    if (value === undefined || value === null) {
+        return null;
+    }
+    const raw = String(value).trim();
+    if (!raw) {
+        return null;
+    }
+    const parsed = moment(raw, ['YYYY-MM-DD', 'MM/DD/YYYY', 'DD/MM/YYYY', 'YYYY/MM/DD', 'MM-DD-YYYY', 'DD-MM-YYYY'], true);
+    if (parsed.isValid()) {
+        return parsed.format('YYYY-MM-DD');
+    }
+    const fallback = moment(raw);
+    return fallback.isValid() ? fallback.format('YYYY-MM-DD') : null;
+}
 
 /**
  * Additional helper function to validate PAR report parameters
@@ -191,6 +208,13 @@ async function generatePrincipalBalancePARReport(reportId, officer, product, bra
     console.log(`Date Range - From: ${dateFrom} To: ${dateTo}`);
 
     try {
+        dateFrom = normalizeParDateInput(dateFrom);
+        dateTo = normalizeParDateInput(dateTo);
+        if (dateFrom && dateTo && moment(dateFrom).isAfter(moment(dateTo))) {
+            const swap = dateFrom;
+            dateFrom = dateTo;
+            dateTo = swap;
+        }
         reportTrackers[reportId].percentage = 10;
         console.log('[2/6] Database connection established successfully.');
 
@@ -221,9 +245,16 @@ async function generatePrincipalBalancePARReport(reportId, officer, product, bra
             queryParams.push(product);
         }
 
-        if (branch && branch !== 'All') {
-            whereClause += ` AND l.branch = ?`;
-            queryParams.push(branch);
+        whereClause = appendBranchFilter(whereClause, queryParams, branch, 'l');
+        if (dateFrom && dateTo) {
+            whereClause += ` AND DATE(l.loan_added_date) BETWEEN ? AND ?`;
+            queryParams.push(dateFrom, dateTo);
+        } else if (dateFrom) {
+            whereClause += ` AND DATE(l.loan_added_date) >= ?`;
+            queryParams.push(dateFrom);
+        } else if (dateTo) {
+            whereClause += ` AND DATE(l.loan_added_date) <= ?`;
+            queryParams.push(dateTo);
         }
 
         return new Promise((resolve, reject) => {
@@ -252,13 +283,32 @@ async function generatePrincipalBalancePARReport(reportId, officer, product, bra
                     e.Firstname as officer_first_name,
                     e.Lastname as officer_last_name,
                     b.BranchName as branch_name,
-                    lp.product_name
+                    lp.product_name,
+                    COALESCE(ps_metrics.principal_balance, 0) as principal_balance,
+                    COALESCE(ps_metrics.total_arrears, 0) as total_arrears,
+                    COALESCE(ps_metrics.oldest_overdue_days, 0) as oldest_overdue_days
                 FROM loan l
                 LEFT JOIN individual_customers ic ON l.loan_customer = ic.id AND l.customer_type = 'individual'
                 LEFT JOIN \`groups\` g ON l.loan_customer = g.group_id AND l.customer_type = 'group'
                 LEFT JOIN employees e ON l.loan_added_by = e.id
-                LEFT JOIN branches b ON l.branch = b.id
+                ${sqlBranchJoin('l', 'b')}
                 LEFT JOIN loan_products lp ON l.loan_product = lp.loan_product_id
+                LEFT JOIN (
+                    SELECT
+                        loan_id,
+                        COALESCE(SUM(CASE WHEN status = 'NOT PAID' THEN principal ELSE 0 END), 0) as principal_balance,
+                        COALESCE(SUM(CASE
+                            WHEN status = 'NOT PAID' AND payment_schedule < CURDATE() THEN amount
+                            ELSE 0
+                        END), 0) as total_arrears,
+                        COALESCE(MIN(CASE
+                            WHEN status = 'NOT PAID' AND payment_schedule < CURDATE()
+                            THEN DATEDIFF(CURDATE(), payment_schedule)
+                            ELSE NULL
+                        END), 0) as oldest_overdue_days
+                    FROM payement_schedules
+                    GROUP BY loan_id
+                ) ps_metrics ON ps_metrics.loan_id = l.loan_id
                 WHERE ${whereClause}
             `;
 
@@ -283,14 +333,9 @@ async function generatePrincipalBalancePARReport(reportId, officer, product, bra
                         const officerName = `${loan.officer_first_name || ''} ${loan.officer_last_name || ''}`.trim() || 'Unknown';
                         const branchName = loan.branch_name || 'Unknown';
 
-                        // Get principal balance (NOT PAID principal)
-                        const principalBalance = await getPrincipalBalance(loanId, db);
-
-                        // Get total payment amount in arrears (actual amount due, not principal)
-                        const paymentAmountInArrears = await getPaymentAmountInArrears(loanId, db);
-
-                        // Get oldest overdue payment to determine aging bucket
-                        const oldestOverdue = await getOldestOverduePayment(loanId, db);
+                        const principalBalance = parseFloat(loan.principal_balance) || 0;
+                        const paymentAmountInArrears = parseFloat(loan.total_arrears) || 0;
+                        const oldestOverdueDays = parseInt(loan.oldest_overdue_days, 10) || 0;
 
                         // Initialize aging buckets
                         let aged_0_7_days = 0;
@@ -303,8 +348,8 @@ async function generatePrincipalBalancePARReport(reportId, officer, product, bra
                         let aged_367_plus_days = 0;
 
                         // Place the principal balance in the appropriate aging bucket based on oldest overdue payment
-                        if (oldestOverdue && principalBalance > 0) {
-                            const daysOverdue = oldestOverdue.days_overdue;
+                        if (oldestOverdueDays > 0 && principalBalance > 0) {
+                            const daysOverdue = oldestOverdueDays;
                             
                             if (daysOverdue >= 0 && daysOverdue <= 7) {
                                 aged_0_7_days = principalBalance;
@@ -342,7 +387,8 @@ async function generatePrincipalBalancePARReport(reportId, officer, product, bra
                             loanPeriod: loan.loan_period,
                             loanInterest: loan.loan_interest,
                             principalBalance: principalBalance,
-                            oldestOverdueDays: oldestOverdue ? oldestOverdue.days_overdue : 0,
+                            oldestOverdueDays: oldestOverdueDays,
+                            rbm_classification: determineRBMClassification(oldestOverdueDays),
                             total_arrears,
                             aged_1_plus_days,
                             aged_0_7_days,
@@ -358,6 +404,10 @@ async function generatePrincipalBalancePARReport(reportId, officer, product, bra
                         processedCount++;
                         if (processedCount % 10 === 0) {
                             console.log(`      Processed ${processedCount}/${loans.length} loans`);
+                        }
+                        if (loans.length > 0 && (processedCount % 50 === 0 || processedCount === loans.length)) {
+                            const p = 40 + Math.floor((processedCount / loans.length) * 40);
+                            reportTrackers[reportId].percentage = Math.min(80, p);
                         }
                     }
 
@@ -503,6 +553,7 @@ function generatePrincipalBalancePARHTML(currentDate, loans, totalPortfolioPrinc
                 <td>${loan.loanNumber}</td>
                 <td>${loan.productName}</td>
                 <td>${loan.officerName}</td>
+                <td>${loan.rbm_classification || determineRBMClassification(loan.oldestOverdueDays || 0)}</td>
                 <td style="text-align: right;">${formatCurrency(loan.principalBalance)}</td>
                 <td style="text-align: right;">${formatCurrency(loan.total_arrears)}</td>
                 <td style="text-align: right;">${formatCurrency(loan.aged_1_plus_days)}</td>
@@ -559,12 +610,12 @@ function generatePrincipalBalancePARHTML(currentDate, loans, totalPortfolioPrinc
                     <td colspan="5">Principal Balance PAR Report</td>
                     <td>As Of:</td>
                     <td colspan="2">${moment(currentDate).format('MM/DD/YYYY')}</td>
-                    <td colspan="7"></td>
+                    <td colspan="8"></td>
                 </tr>
                 <tr class="header-row">
                     <td>Branch:</td>
                     <td colspan="5">${branchName}</td>
-                    <td colspan="10" class="date-filter">${dateRangeDisplay}</td>
+                    <td colspan="11" class="date-filter">${dateRangeDisplay}</td>
                 </tr>
                 <tr class="header-row">
                     <td>Customer</td>
@@ -572,6 +623,7 @@ function generatePrincipalBalancePARHTML(currentDate, loans, totalPortfolioPrinc
                     <td>Loan #</td>
                     <td>Product</td>
                     <td>Officer</td>
+                    <td>RBM Loan Classification</td>
                     <td>Principal Balance</td>
                     <td>Total Arrears</td>
                     <td>>=1 day</td>
@@ -586,7 +638,7 @@ function generatePrincipalBalancePARHTML(currentDate, loans, totalPortfolioPrinc
                 </tr>
                 ${loanRows}
                 <tr class="total-row">
-                    <td colspan="5">TOTAL</td>
+                    <td colspan="6">TOTAL</td>
                     <td style="text-align: right;">${formatCurrency(total_principal_balance)}</td>
                     <td style="text-align: right;">${formatCurrency(total_arrears)}</td>
                     <td style="text-align: right;">${formatCurrency(total_1_plus_days)}</td>
@@ -599,14 +651,14 @@ function generatePrincipalBalancePARHTML(currentDate, loans, totalPortfolioPrinc
                     <td style="text-align: right;">${formatCurrency(total_181_366_days)}</td>
                     <td style="text-align: right;">${formatCurrency(total_367_plus_days)}</td>
                 </tr>
-                <tr><td colspan="15" style="height: 10px;"></td></tr>
+                <tr><td colspan="16" style="height: 10px;"></td></tr>
                 <tr class="total-row">
                     <td>TOTAL PORTFOLIO PRINCIPAL</td>
                     <td></td>
                     <td></td>
                     <td></td>
                     <td style="text-align: right;">MK${formatCurrency(totalPortfolioPrincipal)}</td>
-                    <td colspan="10"></td>
+                    <td colspan="11"></td>
                 </tr>
                 <tr class="total-row">
                     <td>PORTFOLIO AT RISK %</td>
@@ -625,7 +677,7 @@ function generatePrincipalBalancePARHTML(currentDate, loans, totalPortfolioPrinc
                     <td style="text-align: right;">${formatPercentage(par_181_366_percent)}</td>
                     <td style="text-align: right;">${formatPercentage(par_367_plus_percent)}</td>
                 </tr>
-                <tr><td colspan="15" style="height: 10px;"></td></tr>
+                <tr><td colspan="16" style="height: 10px;"></td></tr>
                 <tr class="total-row">
                     <td>AGING SUMMARY</td>
                     <td></td>

@@ -1,6 +1,7 @@
 const moment = require('moment');
 const fs = require('fs');
 const path = require('path');
+const { determineRBMClassification, sqlLoanMaxDaysInArrearsExpr } = require('./databaseHelpers');
 
 /**
  * Generate a Transactions Report HTML
@@ -90,7 +91,8 @@ async function getTransactionsData(branch, transactionType, loan, product, offic
                 tt.name, tt.transaction_type_id,
                 e.id, e.Firstname, e.Lastname,
                 lp.product_name, lp.loan_product_id,
-                b.BranchName, b.Code as branch_code
+                b.BranchName, b.Code as branch_code,
+                ${sqlLoanMaxDaysInArrearsExpr('l')} as days_in_arrears
             FROM transactions t
             JOIN loan l ON l.loan_id = t.loan_id
             JOIN transaction_type tt ON tt.transaction_type_id = t.transaction_type
@@ -130,13 +132,13 @@ async function getTransactionsData(branch, transactionType, loan, product, offic
         }
 
         if (fromDate && toDate) {
-            whereClause += ' AND t.date_stamp BETWEEN ? AND ?';
+            whereClause += ' AND DATE(t.date_stamp) BETWEEN DATE(?) AND DATE(?)';
             params.push(fromDate, toDate);
         } else if (fromDate) {
-            whereClause += ' AND t.date_stamp >= ?';
+            whereClause += ' AND DATE(t.date_stamp) >= DATE(?)';
             params.push(fromDate);
         } else if (toDate) {
-            whereClause += ' AND t.date_stamp <= ?';
+            whereClause += ' AND DATE(t.date_stamp) <= DATE(?)';
             params.push(toDate);
         }
 
@@ -364,6 +366,7 @@ function generateHtml(transactions, filterOptions) {
             <td>${transaction.payment_number || ''}</td>
             <td>${formatCurrency(transaction.amount)}</td>
             <td>${formatDate(transaction.date_stamp)}</td>
+            <td>${determineRBMClassification(transaction.days_in_arrears)}</td>
             <td>${transaction.Firstname} ${transaction.Lastname}</td>
         </tr>`;
     });
@@ -521,35 +524,35 @@ function generateHtml(transactions, filterOptions) {
                     <thead>
                         <!-- Filter information rows (included in export) -->
                         <tr class="filter-header">
-                            <td colspan="12">Payments Transactions Report - Filter Information</td>
+                            <td colspan="13">Payments Transactions Report - Filter Information</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="2">Branch:</td>
-                            <td colspan="10">${filterOptions.branchName || 'All Branches'}</td>
+                            <td colspan="11">${filterOptions.branchName || 'All Branches'}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="2">Transaction Type:</td>
-                            <td colspan="10">${filterOptions.transactionTypeName || 'All Transaction Types'}</td>
+                            <td colspan="11">${filterOptions.transactionTypeName || 'All Transaction Types'}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="2">Loan Product:</td>
-                            <td colspan="10">${filterOptions.productName || 'All Products'}</td>
+                            <td colspan="11">${filterOptions.productName || 'All Products'}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="2">Loan Officer:</td>
-                            <td colspan="10">${filterOptions.officerName || 'All Officers'}</td>
+                            <td colspan="11">${filterOptions.officerName || 'All Officers'}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="2">Date Range:</td>
-                            <td colspan="10">${dateRangeText}</td>
+                            <td colspan="11">${dateRangeText}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="2">Report Date:</td>
-                            <td colspan="10">${moment().format('YYYY-MM-DD HH:mm:ss')}</td>
+                            <td colspan="11">${moment().format('YYYY-MM-DD HH:mm:ss')}</td>
                         </tr>
                         <!-- Empty row for spacing -->
                         <tr>
-                            <td colspan="12">&nbsp;</td>
+                            <td colspan="13">&nbsp;</td>
                         </tr>
                         <!-- Data header row -->
                         <tr>
@@ -565,6 +568,7 @@ function generateHtml(transactions, filterOptions) {
                             <th>Amount (MWK)</th>
                             
                             <th>Payment Date</th>
+                            <th>RBM Loan Classification</th>
                             <th>Officer</th>
                         </tr>
                     </thead>
@@ -575,7 +579,7 @@ function generateHtml(transactions, filterOptions) {
                         <tr>
                             <td colspan="8">Total</td>
                             <td>${formatCurrency(totalAmount)}</td>
-                            <td colspan="3"></td>
+                            <td colspan="4"></td>
                         </tr>
                     </tfoot>
                 </table>

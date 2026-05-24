@@ -57,19 +57,47 @@ const getAmountOfArrearsPaid = async (loanID) => {
     const results = await query(sql);
     return results[0]?.amount_arrears || 0;
 };
+/**
+ * RBM Loan Classification from days in arrears (same rules as RBM Classification Status Report).
+ * Standard: 0-29, Special Mention: 30-59, Substandard: 60-89, Doubtful: 90-179, Loss: 180+
+ */
+function determineRBMClassification(daysInArrears) {
+    const days = Number(daysInArrears) || 0;
+    if (days < 30) {
+        return 'Standard';
+    }
+    if (days < 60) {
+        return 'Special Mention';
+    }
+    if (days < 90) {
+        return 'Substandard';
+    }
+    if (days < 180) {
+        return 'Doubtful';
+    }
+    return 'Loss';
+}
+
+/** SQL subquery: max days in arrears for unpaid installments past due (per loan). */
+function sqlLoanMaxDaysInArrearsExpr(loanAlias = 'l') {
+    return `COALESCE((
+        SELECT MAX(DATEDIFF(CURDATE(), ps.payment_schedule))
+        FROM payement_schedules ps
+        WHERE ps.loan_id = ${loanAlias}.loan_id
+          AND ps.status = 'NOT PAID'
+          AND ps.payment_schedule < CURDATE()
+    ), 0)`;
+}
+
 const getDaysOfArrears = async (loanID) => {
     const sql = `
-        SELECT DATEDIFF(CURRENT_DATE(), MAX(ps.payment_schedule)) AS days_in_arrears
+        SELECT ${sqlLoanMaxDaysInArrearsExpr('l')} AS days_in_arrears
         FROM loan l
-        JOIN payement_schedules ps ON l.loan_id = ps.loan_id
         WHERE l.loan_id = ?
-        AND ps.payment_schedule < CURDATE()
-        AND l.loan_status = 'Active'
-        AND ps.status = 'NOT PAID'
     `;
 
     const results = await query(sql, [loanID]);
-    return results[0]?.days_in_arrears || 0 ; // Since you're expecting a single row
+    return results[0]?.days_in_arrears || 0;
 };
 
 const getNumberOfArrears = async (loanID) => {
@@ -317,6 +345,32 @@ const findBranch = async (branchReference) => {
     return results[0] || null;
 };
 
+/**
+ * JOIN branches when loan.branch may store branches.id, Code, or BranchCode.
+ */
+function sqlBranchJoin(loanAlias = 'l', branchAlias = 'b') {
+    return `LEFT JOIN branches ${branchAlias} ON (
+        ${loanAlias}.branch = ${branchAlias}.id
+        OR ${loanAlias}.branch = ${branchAlias}.Code
+        OR ${loanAlias}.branch = ${branchAlias}.BranchCode
+    )`;
+}
+
+/**
+ * Append branch filter (UI passes branches.id) matching any stored loan.branch form.
+ */
+function appendBranchFilter(whereClause, queryParams, branch, loanAlias = 'l') {
+    if (!branch || branch === 'All') {
+        return whereClause;
+    }
+    queryParams.push(branch, branch, branch);
+    return `${whereClause} AND (
+        ${loanAlias}.branch = ?
+        OR ${loanAlias}.branch IN (SELECT Code FROM branches WHERE id = ?)
+        OR ${loanAlias}.branch IN (SELECT BranchCode FROM branches WHERE id = ?)
+    )`;
+}
+
 
 // Function to get previous loan
 const getPreviousLoan = async (customerID, callback) => {
@@ -382,9 +436,13 @@ module.exports = {
     loanCollection,
     getById,
     findBranch,
+    sqlBranchJoin,
+    appendBranchFilter,
     getPreviousLoan,
     getRBMLoanPaymentById,
     getDaysOfArrears,
+    determineRBMClassification,
+    sqlLoanMaxDaysInArrearsExpr,
     getParPrincipal,
     getPARsummary,
     getPARsummaryu,

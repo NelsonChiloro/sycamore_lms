@@ -22,11 +22,8 @@ class Employees extends CI_Controller
 	}
     public function index()
     {
-
-
         $data = array(
             'employees_data' => $this->Employees_model->get_all(),
-
         );
 		$this->load->view('admin/header');
 		$this->load->view('employees/employees_list', $data);
@@ -55,6 +52,7 @@ class Employees extends CI_Controller
 		'Country' => $row->Country,
 		'Role' => $row->RoleName,
 		'Branch' => $row->Branch,
+                'SupervisorName' => $this->format_supervisor_name(isset($row->Supervisor) ? $row->Supervisor : null),
 		'EmploymentStatus' => $row->EmploymentStatus,
 		'LastUpdatedOn' => $row->LastUpdatedOn,
 		'CreatedOn' => $row->CreatedOn,
@@ -107,11 +105,69 @@ class Employees extends CI_Controller
         echo json_encode($res);
     }
 
+    /**
+     * Map existing relationship officers to relationship supervisors.
+     */
+    public function map_supervisors()
+    {
+        $data = array(
+            'officers' => $this->Employees_model->get_relationship_officers(true),
+            'supervisors' => $this->Employees_model->get_relationship_supervisors(),
+        );
+        $this->load->view('admin/header');
+        $this->load->view('employees/map_supervisors', $data);
+        $this->load->view('admin/footer');
+    }
+
+    public function map_supervisors_action()
+    {
+        $assignments = $this->input->post('supervisor');
+        if (!is_array($assignments)) {
+            $this->toaster->error('No mapping data received.');
+            redirect(site_url('employees/map_supervisors'));
+            return;
+        }
+
+        $updated = 0;
+        foreach ($assignments as $officer_id => $supervisor_id) {
+            $officer_id = (int) $officer_id;
+            if ($officer_id <= 0) {
+                continue;
+            }
+            $officer = $this->Employees_model->get_by_id($officer_id);
+            if (!$officer || !$this->Employees_model->role_is_relationship_officer($officer->RoleName)) {
+                continue;
+            }
+            $supervisor_id = (int) $supervisor_id;
+            if ($supervisor_id <= 0) {
+                $this->Employees_model->update_supervisor($officer_id, 0);
+                $updated++;
+                continue;
+            }
+            $supervisor = $this->Employees_model->get_by_id($supervisor_id);
+            if (!$supervisor || !$this->Employees_model->role_is_relationship_supervisor($supervisor->RoleName)) {
+                continue;
+            }
+            $this->Employees_model->update_supervisor($officer_id, $supervisor_id);
+            $updated++;
+        }
+
+        log_activity(array(
+            'user_id' => $this->session->userdata('user_id'),
+            'activity' => 'Updated relationship officer supervisor mappings (' . $updated . ' officers)',
+        ));
+        $this->toaster->success('Supervisor mappings saved successfully.');
+        redirect(site_url('employees/map_supervisors'));
+    }
+
     public function create() 
     {
+        $roles = $this->Roles_model->get_all();
         $data = array(
             'button' => 'Create',
             'action' => site_url('employees/create_action'),
+            'roles_json' => json_encode($this->build_role_type_map($roles)),
+            'relationship_supervisors' => $this->Employees_model->get_relationship_supervisors(),
 	    'id' => set_value('id'),
 	    'Firstname' => set_value('Firstname'),
 	    'Middlename' => set_value('Middlename'),
@@ -127,6 +183,7 @@ class Employees extends CI_Controller
 	    'Country' => set_value('Country'),
 	    'Role' => set_value('Role'),
 	    'Branch' => set_value('Branch'),
+            'Supervisor' => set_value('Supervisor'),
 	    'EmploymentStatus' => set_value('EmploymentStatus'),
 	    'LastUpdatedOn' => set_value('LastUpdatedOn'),
 	    'CreatedOn' => set_value('CreatedOn'),
@@ -143,6 +200,12 @@ class Employees extends CI_Controller
         if ($this->form_validation->run() == FALSE) {
             $this->create();
         } else {
+            $role_row = $this->Roles_model->get_by_id($this->input->post('Role', TRUE));
+            $is_ro = $role_row && $this->Employees_model->role_is_relationship_officer($role_row->RoleName);
+            $supervisor_val = null;
+            if ($is_ro) {
+                $supervisor_val = (int) $this->input->post('Supervisor', TRUE);
+            }
             $data = array(
 		'Firstname' => $this->input->post('Firstname',TRUE),
 		'Middlename' => $this->input->post('Middlename',TRUE),
@@ -158,6 +221,7 @@ class Employees extends CI_Controller
 		'Country' => $this->input->post('Country',TRUE),
 		'Role' => $this->input->post('Role',TRUE),
 		'BranchCode' => $this->input->post('Branch',TRUE),
+                'Supervisor' => $supervisor_val > 0 ? $supervisor_val : null,
 			);
 
 //			$logger = array(
@@ -190,9 +254,12 @@ class Employees extends CI_Controller
         $row = $this->Employees_model->get_by_id($id);
 
         if ($row) {
+            $roles = $this->Roles_model->get_all();
             $data = array(
                 'button' => 'Update',
                 'action' => site_url('employees/update_action'),
+                'roles_json' => json_encode($this->build_role_type_map($roles)),
+                'relationship_supervisors' => $this->Employees_model->get_relationship_supervisors(),
 		'id' => set_value('id', $row->empid),
 		'Firstname' => set_value('Firstname', $row->Firstname),
 		'Middlename' => set_value('Middlename', $row->Middlename),
@@ -208,6 +275,7 @@ class Employees extends CI_Controller
 		'Country' => set_value('Country', $row->Country),
 		'Role' => set_value('Role', $row->Role),
 		'Branch' => set_value('Branch', $row->BranchCode),
+                'Supervisor' => set_value('Supervisor', $row->Supervisor),
 
 	    );
 			$this->load->view('admin/header');
@@ -226,6 +294,12 @@ class Employees extends CI_Controller
         if ($this->form_validation->run() == FALSE) {
             $this->update($this->input->post('id', TRUE));
         } else {
+            $role_row = $this->Roles_model->get_by_id($this->input->post('Role', TRUE));
+            $is_ro = $role_row && $this->Employees_model->role_is_relationship_officer($role_row->RoleName);
+            $supervisor_val = null;
+            if ($is_ro) {
+                $supervisor_val = (int) $this->input->post('Supervisor', TRUE);
+            }
             $data = array(
 		'Firstname' => $this->input->post('Firstname',TRUE),
 		'Middlename' => $this->input->post('Middlename',TRUE),
@@ -241,6 +315,7 @@ class Employees extends CI_Controller
 		'Country' => $this->input->post('Country',TRUE),
 		'Role' => $this->input->post('Role',TRUE),
 		'BranchCode' => $this->input->post('Branch',TRUE),
+                'Supervisor' => $supervisor_val > 0 ? $supervisor_val : null,
 
 	    );
 
@@ -295,6 +370,7 @@ class Employees extends CI_Controller
 	$this->form_validation->set_rules('City', 'city', 'trim|required');
 	$this->form_validation->set_rules('Country', 'country', 'trim|required');
 	$this->form_validation->set_rules('Role', 'role', 'trim|required');
+        $this->form_validation->set_rules('Supervisor', 'relationship supervisor', 'trim|callback_validate_supervisor_for_role');
 
 
 
@@ -314,11 +390,57 @@ class Employees extends CI_Controller
 	$this->form_validation->set_rules('City', 'city', 'trim|required');
 	$this->form_validation->set_rules('Country', 'country', 'trim|required');
 	$this->form_validation->set_rules('Role', 'role', 'trim|required');
+        $this->form_validation->set_rules('Supervisor', 'relationship supervisor', 'trim|callback_validate_supervisor_for_role');
 
 
 
 	$this->form_validation->set_rules('id', 'id', 'trim');
 	$this->form_validation->set_error_delimiters('<span class="text-danger">', '</span>');
+    }
+
+    public function validate_supervisor_for_role($supervisor_id)
+    {
+        $role_id = $this->input->post('Role');
+        $role = $this->Roles_model->get_by_id($role_id);
+        if (!$role || !$this->Employees_model->role_is_relationship_officer($role->RoleName)) {
+            return true;
+        }
+        if ($supervisor_id === '' || $supervisor_id === null || (int) $supervisor_id <= 0) {
+            $this->form_validation->set_message('validate_supervisor_for_role', 'A Relationship supervisor is required for Relationship officers.');
+            return false;
+        }
+        $supervisor = $this->Employees_model->get_by_id((int) $supervisor_id);
+        if (!$supervisor || !$this->Employees_model->role_is_relationship_supervisor($supervisor->RoleName)) {
+            $this->form_validation->set_message('validate_supervisor_for_role', 'Please select a valid Relationship supervisor.');
+            return false;
+        }
+        return true;
+    }
+
+    private function format_supervisor_name($supervisor_id)
+    {
+        if (empty($supervisor_id)) {
+            return 'N/A';
+        }
+        $sup = $this->Employees_model->get_by_id((int) $supervisor_id);
+        if (!$sup) {
+            return 'N/A';
+        }
+        return trim($sup->Firstname . ' ' . $sup->Lastname);
+    }
+
+    private function build_role_type_map($roles)
+    {
+        $map = array('officer' => array(), 'supervisor' => array());
+        foreach ($roles as $role) {
+            if ($this->Employees_model->role_is_relationship_officer($role->RoleName)) {
+                $map['officer'][] = (int) $role->id;
+            }
+            if ($this->Employees_model->role_is_relationship_supervisor($role->RoleName)) {
+                $map['supervisor'][] = (int) $role->id;
+            }
+        }
+        return $map;
     }
 
 }

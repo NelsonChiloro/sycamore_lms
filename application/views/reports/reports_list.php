@@ -13,7 +13,8 @@
         <div class="card-body" style="border: thick #153505 solid;border-radius: 14px;">
         <h2 style="margin-top:0px">Reports List</h2>
 
-        <table class="table table-bordered" id="data-table1" style="margin-bottom: 10px">
+        <div style="width:100%; max-width:100%; overflow-x:auto; overflow-y:hidden;">
+        <table class="table table-bordered" id="data-table1" style="margin-bottom: 10px; min-width: 980px;">
             <thead>
             <tr>
                 <th>No</th>
@@ -37,46 +38,30 @@
             {
                 ?>
                 <tr>
-			<td width="80px"><?php echo ++$start ?></td>
-                    <td><?php echo $reports->report_type ?></td>
+			<td width="80px" style="white-space: nowrap;"><?php echo ++$start ?></td>
+                    <td style="word-break: break-word;"><?php echo $reports->report_type ?></td>
                     <td><?php   if($reports->status=='completed'){echo "<font color='green'>Complete</font>";}else{ echo "<font color='red'>In Progress</font>";} ?></td>
-                    <td><div class="progress">
+                    <td style="min-width: 150px;"><div class="progress">
                             <div class="progress-bar" role="progressbar" style="width: <?php echo $reports->percentage ?>%;" aria-valuenow="<?php echo $reports->percentage ?>" aria-valuemin="0" aria-valuemax="100">
 
                             </div>
                         </div>
                         <?php echo round($reports->percentage,2) ?>%
                         </td>
-                    <td><?php
-                        if (!empty($reports->download_link)) {
-                            $previewLink = str_replace('\\', '/', $reports->download_link);
-
-                            if (!preg_match('#^https?://#i', $previewLink)) {
-                                if (preg_match('#^[A-Za-z]:/#', $previewLink) === 1 || strpos($previewLink, '/') === 0) {
-                                    $previewLink = 'bulk_report/reports/' . basename($previewLink);
-                                } else {
-                                    $previewLink = preg_replace('#^/?bulk_report/#', 'bulk_report/', $previewLink);
-                                    if (strpos($previewLink, 'bulk_report/') !== 0) {
-                                        $previewLink = 'bulk_report/' . ltrim($previewLink, '/');
-                                    }
-                                }
-
-                                $previewLink = base_url($previewLink);
-                            }
+                    <td style="white-space: nowrap;"><?php
+                        $previewLink = report_preview_url($reports->download_link);
+                        if ($previewLink) {
                             ?>
-                            <a href="<?php echo $previewLink; ?>" target="_blank" rel="noopener">Preview</a>
-                            /
-                            <a href="<?php echo base_url('report/download/'.$reports->id); ?>">Export</a>
+                            <a href="<?php echo htmlspecialchars($previewLink); ?>" target="_blank" rel="noopener">Preview</a>
                         <?php
                         }
-
                         ?></td>
 
 
-			<td><?php echo $reports->generated_time ?></td>
+			<td style="white-space: nowrap;"><?php echo $reports->generated_time ?></td>
 
-                    <td><?php echo $reports->completed_time ?></td>
-			<td><?php echo $reports->user ?></td>
+                    <td style="white-space: nowrap;"><?php echo $reports->completed_time ?></td>
+			<td style="word-break: break-word;"><?php echo $reports->user ?></td>
 
 			<td style="text-align:center" width="200px">
 				<?php 
@@ -90,6 +75,7 @@
             ?>
             </tbody>
         </table>
+        </div>
         </div>
     </div>
 </div>
