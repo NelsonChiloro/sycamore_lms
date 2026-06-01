@@ -11,6 +11,8 @@
 	</div>
 	<div class="card">
 		<div class="card-body" style="border: thick #24C16B solid;border-radius: 14px;">
+            <?php if (!empty($show_loan_filters)) { $this->load->view('loan/_loan_list_filters'); } ?>
+            <hr>
             <div style="overflow-y: auto"">
 			<table  id="data-table" class="tableCss">
 				<thead>
@@ -31,13 +33,14 @@
 
 					<th>Loan Status</th>
                     <th>Branch</th>
+                    <th>RBM Loan Classification</th>
 					<th>Loan Added Date</th>
 					<th>Action</th>
 
 				</tr>
 				</thead>
 				<tbody><?php
-				$n = 1;
+				$n = isset($list_offset) ? ($list_offset + 1) : 1;
 
 				foreach ($loan_data as $loan)
 				{
@@ -60,6 +63,7 @@
 
 						<td><?php echo $loan->loan_status ?></td>
 						<td><?php echo !empty($loan->branch_display_name) ? htmlspecialchars($loan->branch_display_name) : 'N/A'; ?></td>
+						<td><?php echo !empty($loan->rbm_classification) ? htmlspecialchars($loan->rbm_classification) : 'Standard'; ?></td>
 						<td><?php echo $loan->loan_added_date ?></td>
 						<td><a href="<?php echo base_url('loan/repayment_view_pay_off/').$loan->loan_id?>">Pay off</a></td>
 
@@ -71,6 +75,7 @@
 				</tbody>
 			</table>
         </div>
+        <?php $this->load->view('loan/_loan_list_pagination'); ?>
 		</div>
 	</div>
 </div>

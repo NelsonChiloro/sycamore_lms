@@ -58,6 +58,12 @@ $branches = get_all('branches');
                         </div>
                     </div>
 
+                    <div class="col-md-6 col-lg-4">
+                        <div class="form-group">
+                            <?php $officer_select_id = 'user'; $this->load->view('reports/_relationship_supervisor_filter'); ?>
+                        </div>
+                    </div>
+
                     <!-- Loan Product Filter -->
                     <div class="col-md-6 col-lg-4">
                         <div class="form-group">

@@ -11,7 +11,8 @@
 	</div>
 	<div class="card">
 		<div class="card-body" style="border: thick #153505 solid;border-radius: 14px;">
-
+            <?php if (!empty($show_loan_filters)) { $this->load->view('loan/_loan_list_filters'); } ?>
+            <hr>
 			<table  id="data-table" class="tableCss">
 				<thead>
 				<tr>
@@ -36,7 +37,7 @@
 				</tr>
 				</thead>
 				<tbody><?php
-				$n = 1;
+				$n = isset($list_offset) ? ($list_offset + 1) : 1;
 
 				foreach ($loan_data as $loan)
 				{
@@ -69,5 +70,6 @@
 				</tbody>
 			</table>
 		</div>
+		<?php $this->load->view('loan/_loan_list_pagination'); ?>
 	</div>
 </div>

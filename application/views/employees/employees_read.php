@@ -26,6 +26,9 @@
 	    <tr><td>Country</td><td><?php echo $Country; ?></td></tr>
 	    <tr><td>Role</td><td><?php echo $Role; ?></td></tr>
 		<tr><td>Branch</td><td><?php echo $Branch; ?></td></tr>
+        <?php if (!empty($SupervisorName) && $SupervisorName !== 'N/A') { ?>
+        <tr><td>Relationship supervisor</td><td><?php echo htmlspecialchars($SupervisorName); ?></td></tr>
+        <?php } ?>
 	    <tr><td>EmploymentStatus</td><td><?php echo $EmploymentStatus; ?></td></tr>
 	    <tr><td>LastUpdatedOn</td><td><?php echo $LastUpdatedOn; ?></td></tr>
 	    <tr><td>CreatedOn</td><td><?php echo $CreatedOn; ?></td></tr>

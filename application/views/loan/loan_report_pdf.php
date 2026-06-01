@@ -177,6 +177,7 @@ $imgg = 'data:image;base64,'.base64_encode(file_get_contents($linkk))
 				<th>Loan Amount Total</th>
 				<th>Loan Status</th>
                 <th>Branch</th>
+                <th>RBM Loan Classification</th>
 				<th>Loan Added Date</th>
 
 			</tr>
@@ -205,6 +206,7 @@ $imgg = 'data:image;base64,'.base64_encode(file_get_contents($linkk))
 					<td>MK<?php echo number_format($loan->loan_amount_total,2) ?></td>
 					<td><?php echo $loan->loan_status ?></td>
 				<td><?php echo !empty($loan->branch_display_name) ? htmlspecialchars($loan->branch_display_name) : 'N/A'; ?></td>
+					<td><?php echo !empty($loan->rbm_classification) ? htmlspecialchars($loan->rbm_classification) : 'Standard'; ?></td>
 					<td><?php echo $loan->loan_added_date ?></td>
 
 				</tr>

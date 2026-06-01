@@ -1510,7 +1510,8 @@ function mish(id){
      * Exporting Table Data into CSV
      */
 
-    document.getElementById("exportTableCSV").addEventListener("click", function(e){
+    var exportTableCsvBtn = document.getElementById("exportTableCSV");
+    if (exportTableCsvBtn) exportTableCsvBtn.addEventListener("click", function(e){
 
         e.preventDefault()
 
@@ -1845,115 +1846,164 @@ function mish(id){
             }));
         }
 
+        function loanListServerExportUrl(format) {
+            var form = document.getElementById('loan-list-filters-form');
+            var params;
+            var baseUrl;
+            if (form) {
+                params = new URLSearchParams(new FormData(form));
+                baseUrl = form.getAttribute('action') || window.location.href.split('?')[0];
+            } else {
+                params = new URLSearchParams(window.location.search);
+                baseUrl = window.location.pathname;
+            }
+            params.delete('page');
+            params.delete('per_page');
+            params.delete('search');
+            params.set('export', format);
+            var join = baseUrl.indexOf('?') >= 0 ? '&' : '?';
+            return baseUrl.split('?')[0] + join + params.toString();
+        }
+
+        function loanListServerExport(format) {
+            window.location.href = loanListServerExportUrl(format);
+        }
+
+        function runDataTableButtonWithOverlay(defaultAction, e, dt, node, config) {
+            var overlay = createLoadingOverlay().appendTo('body');
+            setTimeout(function() {
+                try {
+                    defaultAction.call(this, e, dt, node, config);
+                } catch (err) {
+                    console.error('DataTables export failed:', err);
+                } finally {
+                    overlay.remove();
+                }
+            }.bind(this), 100);
+        }
+
+        function buildLoanListExportButtons() {
+            return [
+                {
+                    extend: 'copy',
+                    text: 'Copy',
+                    action: function(e, dt, node, config) {
+                        runDataTableButtonWithOverlay.call(this, $.fn.dataTable.ext.buttons.copyHtml5.action, e, dt, node, config);
+                    }
+                },
+                {
+                    extend: 'csv',
+                    text: 'CSV',
+                    title: 'Loan List Export',
+                    action: function(e, dt, node, config) {
+                        runDataTableButtonWithOverlay.call(this, $.fn.dataTable.ext.buttons.csvHtml5.action, e, dt, node, config);
+                    }
+                },
+                {
+                    text: 'Excel',
+                    action: function(e) {
+                        if (e) {
+                            e.preventDefault();
+                        }
+                        loanListServerExport('excel');
+                    }
+                },
+                {
+                    text: 'PDF',
+                    action: function(e) {
+                        if (e) {
+                            e.preventDefault();
+                        }
+                        loanListServerExport('pdf');
+                    }
+                },
+                {
+                    extend: 'print',
+                    text: 'Print',
+                    action: function(e, dt, node, config) {
+                        runDataTableButtonWithOverlay.call(this, $.fn.dataTable.ext.buttons.print.action, e, dt, node, config);
+                    }
+                }
+            ];
+        }
+
+        function initLoanListDataTable(selector, options) {
+            if (!$(selector).length || $.fn.dataTable.isDataTable(selector)) {
+                return;
+            }
+            var settings = $.extend({
+                responsive: true,
+                dom: 'Bfrtip',
+                buttons: buildLoanListExportButtons()
+            }, options || {});
+            $(selector).DataTable(settings);
+        }
+
         // Check if DataTables is loaded
         if ($.fn.DataTable) {
-            $('#data-table1').DataTable({
-                responsive: true,
-                dom: 'Bfrtip',
-                drawCallback: function() {
-                    updateCollectionFooterTotal(this.api());
-                },
-                buttons: [
-                    {
-                        extend: 'copy',
-                        text: 'Copy',
-                        action: function(e, dt, node, config) {
-                            var overlay = createLoadingOverlay().appendTo('body');
-
-                            // Use setTimeout to ensure overlay is visible
-                            setTimeout(() => {
-                                try {
-                                    // Perform the actual copy action
-                                    $.fn.dataTable.ext.buttons.copyHtml5.action.call(this, e, dt, node, config);
-                                } catch(err) {
-                                    console.error('Copy failed:', err);
-                                } finally {
-                                    // Remove overlay
-                                    overlay.remove();
-                                }
-                            }, 100);
-                        }
+            if ($('.loan-list-filters-form').length) {
+                if ($('#data-table1').length) {
+                    initLoanListDataTable('#data-table1');
+                }
+                if ($('#data-table').length) {
+                    initLoanListDataTable('#data-table');
+                }
+            } else if ($('#data-table1').length && !$.fn.dataTable.isDataTable('#data-table1')) {
+                $('#data-table1').DataTable({
+                    responsive: true,
+                    dom: 'Bfrtip',
+                    drawCallback: function() {
+                        updateCollectionFooterTotal(this.api());
                     },
-                    {
-                        extend: 'csv',
-                        text: 'CSV',
-                        title: 'Report Export',
-                        action: function(e, dt, node, config) {
-                            var overlay = createLoadingOverlay().appendTo('body');
-
-                            setTimeout(() => {
-                                try {
-                                    $.fn.dataTable.ext.buttons.csvHtml5.action.call(this, e, dt, node, config);
-                                } catch(err) {
-                                    console.error('CSV export failed:', err);
-                                } finally {
-                                    overlay.remove();
-                                }
-                            }, 100);
+                    buttons: [
+                        {
+                            extend: 'copy',
+                            text: 'Copy',
+                            action: function(e, dt, node, config) {
+                                runDataTableButtonWithOverlay.call(this, $.fn.dataTable.ext.buttons.copyHtml5.action, e, dt, node, config);
+                            }
+                        },
+                        {
+                            extend: 'csv',
+                            text: 'CSV',
+                            title: 'Report Export',
+                            action: function(e, dt, node, config) {
+                                runDataTableButtonWithOverlay.call(this, $.fn.dataTable.ext.buttons.csvHtml5.action, e, dt, node, config);
+                            }
+                        },
+                        {
+                            extend: 'excel',
+                            text: 'Excel',
+                            title: 'Report Export',
+                            action: function(e, dt, node, config) {
+                                runDataTableButtonWithOverlay.call(this, $.fn.dataTable.ext.buttons.excelHtml5.action, e, dt, node, config);
+                            }
+                        },
+                        {
+                            extend: 'pdf',
+                            text: 'PDF',
+                            title: 'Report Export',
+                            action: function(e, dt, node, config) {
+                                runDataTableButtonWithOverlay.call(this, $.fn.dataTable.ext.buttons.pdfHtml5.action, e, dt, node, config);
+                            }
+                        },
+                        {
+                            extend: 'print',
+                            text: 'Print',
+                            action: function(e, dt, node, config) {
+                                runDataTableButtonWithOverlay.call(this, $.fn.dataTable.ext.buttons.print.action, e, dt, node, config);
+                            }
                         }
-                    },
-                    {
-                        extend: 'excel',
-                        text: 'Excel',
-                        title: 'Report Export',
-                        action: function(e, dt, node, config) {
-                            var overlay = createLoadingOverlay().appendTo('body');
-
-                            setTimeout(() => {
-                                try {
-                                    $.fn.dataTable.ext.buttons.excelHtml5.action.call(this, e, dt, node, config);
-                                } catch(err) {
-                                    console.error('Excel export failed:', err);
-                                } finally {
-                                    overlay.remove();
-                                }
-                            }, 100);
-                        }
-                    },
-                    {
-                        extend: 'pdf',
-                        text: 'PDF',
-                        title: 'Report Export',
-                        action: function(e, dt, node, config) {
-                            var overlay = createLoadingOverlay().appendTo('body');
-
-                            setTimeout(() => {
-                                try {
-                                    $.fn.dataTable.ext.buttons.pdfHtml5.action.call(this, e, dt, node, config);
-                                } catch(err) {
-                                    console.error('PDF export failed:', err);
-                                } finally {
-                                    overlay.remove();
-                                }
-                            }, 100);
-                        }
-                    },
-                    {
-                        extend: 'print',
-                        text: 'Print',
-                        action: function(e, dt, node, config) {
-                            var overlay = createLoadingOverlay().appendTo('body');
-
-                            setTimeout(() => {
-                                try {
-                                    $.fn.dataTable.ext.buttons.print.action.call(this, e, dt, node, config);
-                                } catch(err) {
-                                    console.error('Print failed:', err);
-                                } finally {
-                                    overlay.remove();
-                                }
-                            }, 100);
-                        }
-                    }
-                ]
-            });
+                    ]
+                });
+            }
         } else {
             console.error('DataTables is not loaded');
         }
         
         
-         if ($.fn.DataTable) {
-            $('#data-table-arrears').DataTable({
+            if ($.fn.DataTable && $('#data-table-arrears').length && !$.fn.dataTable.isDataTable('#data-table-arrears')) {
+                $('#data-table-arrears').DataTable({
                 responsive: true,
                 dom: 'Bfrtip',
                 buttons: [
@@ -2054,7 +2104,7 @@ function mish(id){
             console.error('DataTables is not loaded');
         }
         
-         if ($.fn.DataTable) {
+        if ($.fn.DataTable && $('#data-table-collection').length && !$.fn.dataTable.isDataTable('#data-table-collection')) {
             $('#data-table-collection').DataTable({
                 responsive: true,
                 dom: 'Bfrtip',

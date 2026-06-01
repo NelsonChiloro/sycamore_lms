@@ -11,6 +11,8 @@
 	</div>
 	<div class="card">
 		<div class="card-body" style="border: thick #24C16B solid;border-radius: 14px;">
+            <?php if (!empty($show_loan_filters)) { $this->load->view('loan/_loan_list_filters'); } ?>
+            <hr>
             <div style="overflow-y: auto"">
 			<table  id="data-table" class="tableCss">
 				<thead>

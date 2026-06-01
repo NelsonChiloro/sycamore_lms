@@ -252,13 +252,19 @@ $nextdatevalue='';
         // You can handle this case here
         $nextdatevalue='';
     }
-    $payments = $this->Payement_schedules_model->get_total($customer->loan_id);
+    $schedule_rows = $this->Payement_schedules_model->get_all_by_id($customer->loan_id);
+    $loan_row = $this->db->select('loan_amount_total')->from('loan')->where('loan_id', $customer->loan_id)->get()->row();
+    $balance_summary = $this->Payement_schedules_model->summarize_loan_balances(
+        $schedule_rows,
+        $loan_row ? $loan_row->loan_amount_total : null
+    );
     $data = array(
         'customer_account'=>$re->customer_account,
         'transaction_id'=>$re->transaction_id,
         'amount'=>$re->adebit,
-        'total_amount'=>$payments->total_payment,
-        'total_paid_amount'=>$payments->paid_amount,
+        'total_amount'=>$balance_summary->total_loan_amount,
+        'total_paid_amount'=>$balance_summary->total_paid,
+        'remaining_balance'=>$balance_summary->remaining_balance,
         'date'=>$re->adate,
         'next_date'=> $nextdatevalue,
         'name'=>$customer->customer_name
@@ -271,13 +277,19 @@ public function email_receipt($id){
     $re = $this->Transaction_model->get_my_transaction_filter_one($id);
     $customer = $this->Loan_model->get_one($re->customer_account);
     $next_date = $this->Loan_model->get_next($re->customer_account);
-    $payments = $this->Payement_schedules_model->get_total($customer->loan_id);
+    $schedule_rows = $this->Payement_schedules_model->get_all_by_id($customer->loan_id);
+    $loan_row = $this->db->select('loan_amount_total')->from('loan')->where('loan_id', $customer->loan_id)->get()->row();
+    $balance_summary = $this->Payement_schedules_model->summarize_loan_balances(
+        $schedule_rows,
+        $loan_row ? $loan_row->loan_amount_total : null
+    );
     $data = array(
         'customer_account'=>$re->customer_account,
         'transaction_id'=>$re->transaction_id,
         'amount'=>$re->adebit,
-        'total_amount'=>$payments->total_payment,
-        'total_paid_amount'=>$payments->paid_amount,
+        'total_amount'=>$balance_summary->total_loan_amount,
+        'total_paid_amount'=>$balance_summary->total_paid,
+        'remaining_balance'=>$balance_summary->remaining_balance,
         'date'=>$re->adate,
         'next_date'=>$next_date->payment_schedule,
         'name'=>$customer->customer_name

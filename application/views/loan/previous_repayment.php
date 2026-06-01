@@ -55,42 +55,22 @@ $next_payment_details = $this->Payement_schedules_model->get_next($next_payment_
 							<td style="text-align: right;padding-right: 10px;">Total Loan cover</td>
 							<td>MK<?php echo number_format($loan_cover_amount,2)?></td>
 						</tr>
+						<?php
+						if (!isset($payment_balance)) {
+							$payment_balance = $this->Payement_schedules_model->summarize_loan_balances($payments, $loan_amount_total);
+						}
+						?>
 						<tr>
 							<td style="text-align: right;padding-right: 10px;">Total loan amount</td>
-							<td>MK <?php echo number_format($loan_amount_total,2)?></td>
+							<td>MK <?php echo number_format($payment_balance->total_loan_amount, 2); ?></td>
 						</tr>
 						<tr>
 							<td style="text-align: right;padding-right: 10px;">Payments Made</td>
-							<td>MK
-								<?php
-								$total_p = 0;
-								foreach ($payments as $pp){
-									if($pp->status == "PAID"){
-										$total_p +=$pp->amount;
-									}
-
-								}
-								echo number_format($total_p,2);
-								?>
-
-							</td>
+							<td>MK <?php echo number_format($payment_balance->total_paid, 2); ?></td>
 						</tr>
 						<tr>
-							<td style="text-align: right;padding-right: 10px;">Remaining Balance
-							</td>
-							<td>MK
-
-								<?php
-								$total_b = 0;
-								foreach ($payments as $ppp){
-									if($ppp->status == "NOT PAID"){
-										$total_b +=$pp->amount;
-									}
-
-								}
-								echo number_format($total_b,2);
-								?>
-							</td>
+							<td style="text-align: right;padding-right: 10px;">Remaining Balance</td>
+							<td>MK <?php echo number_format($payment_balance->remaining_balance, 2); ?></td>
 						</tr>
 					</table>
 					<br>

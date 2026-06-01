@@ -17,6 +17,8 @@ $charge = get_by_id('charges','charge_id','1');
 	</div>
 	<div class="card">
 		<div class="card-body" style="border: thick #153505 solid;border-radius: 14px;">
+            <?php if (!empty($show_loan_filters)) { $this->load->view('loan/_loan_list_filters'); } ?>
+            <hr>
             <div style="overflow-y: auto"">
             <table  id="data-table" class="tableCss" >
                 <thead>
@@ -51,12 +53,17 @@ $charge = get_by_id('charges','charge_id','1');
                 </tr>
                 </thead>
                 <tbody><?php
-                $n = 1;
+                $n = isset($list_offset) ? ($list_offset + 1) : 1;
 
                 $mandate_fees = FALSE;
                 foreach ($loan_data as $loan)
                 {
-                   $has_loan = $this->db->select("*")->from('loan')->where('loan_customer',$loan->loan_customer)->where('loan_status','ACTIVE')->get()->row();
+                   $has_loan = $this->db->select("*")->from('loan')
+                       ->where('loan_customer', $loan->loan_customer)
+                       ->where('loan_product', $loan->loan_product)
+                       ->where('loan_status', 'ACTIVE')
+                       ->where('loan_id !=', $loan->loan_id)
+                       ->get()->row();
 
                    $pays = FALSE;
                     $paid = get_by_id('loan_products','loan_product_id', $loan->loan_product);
@@ -92,7 +99,7 @@ $charge = get_by_id('charges','charge_id','1');
 
 
 
-                            <a class="btn btn-sm btn-danger" href="<?php echo base_url('loan/approval_action?id=').$loan->loan_id."&action=ACTIVE" ?>" onclick="return confirm('Are you sure you want to disburse this?')">Disburse</a>
+                            <button type="button" class="btn btn-sm btn-danger" onclick="openDisburseModal(<?php echo (int)$loan->loan_id; ?>, '<?php echo htmlspecialchars($loan->loan_number, ENT_QUOTES); ?>')">Disburse</button>
 
 
                             <a href="<?php echo base_url('loan/view/').$loan->loan_id?>" class="btn btn-sm btn-info">View loan</a>
@@ -106,7 +113,46 @@ $charge = get_by_id('charges','charge_id','1');
                 </tbody>
             </table>
         </div>
+        <?php $this->load->view('loan/_loan_list_pagination'); ?>
 
 		</div>
 	</div>
 </div>
+
+<div aria-hidden="true" class="onboarding-modal modal fade" id="disburse_loan_modal" role="dialog" tabindex="-1">
+    <div class="modal-dialog modal-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Disburse loan</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <form method="post" action="<?php echo base_url('loan/approval_action'); ?>" id="disburse_loan_form">
+                <div class="modal-body">
+                    <input type="hidden" name="id" id="disburse_loan_id" value="">
+                    <input type="hidden" name="action" value="ACTIVE">
+                    <p class="mb-3">Loan: <strong id="disburse_loan_number"></strong></p>
+                    <div class="form-group">
+                        <label for="disbursement_date">Disbursement date</label>
+                        <input type="date" class="form-control" name="disbursement_date" id="disbursement_date">
+                        <small class="form-text text-muted">Leave blank to use today's date.</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to disburse this loan?');">Disburse</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+function openDisburseModal(loanId, loanNumber) {
+    document.getElementById('disburse_loan_id').value = loanId;
+    document.getElementById('disburse_loan_number').textContent = loanNumber;
+    document.getElementById('disbursement_date').value = '';
+    $('#disburse_loan_modal').modal('show');
+}
+</script>

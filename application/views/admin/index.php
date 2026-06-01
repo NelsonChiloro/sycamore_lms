@@ -434,15 +434,16 @@ $recent_reports = $this->db->get('reports')->result();
                                                 $status_class = 'status-failed';
                                             }
 
-                                            $download_btn = ($report->download_link && $report->status === 'completed')
-                                                ? '<a href="' . base_url('report/download/' . $report->id) . '" class="btn btn-sm btn-primary"><i class="anticon anticon-download"></i></a>'
-                                                : '<button type="button" disabled class="btn btn-sm btn-default"><i class="anticon anticon-download"></i></button>';
+                                            $preview_url = report_preview_url($report->download_link);
+                                            $preview_btn = ($preview_url && $report->status === 'completed')
+                                                ? '<a href="' . htmlspecialchars($preview_url) . '" target="_blank" rel="noopener" class="btn btn-sm btn-primary" title="Preview"><i class="anticon anticon-eye"></i></a>'
+                                                : '<button type="button" disabled class="btn btn-sm btn-default" title="Preview unavailable"><i class="anticon anticon-eye"></i></button>';
                                             ?>
                                             <tr>
                                                 <td><?php echo $report->report_type; ?></td>
                                                 <td><span class="status-badge <?php echo $status_class; ?>"><?php echo $report->status; ?></span></td>
                                                 <td><?php echo date('M d, Y', strtotime($report->generated_time)); ?></td>
-                                                <td><?php echo $download_btn; ?></td>
+                                                <td><?php echo $preview_btn; ?></td>
                                             </tr>
                                         <?php } ?>
                                     </tbody>

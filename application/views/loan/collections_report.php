@@ -38,6 +38,7 @@
                             }
                             ?>
                         </select>
+                        <?php $officer_select_id = 'officer'; $this->load->view('reports/_relationship_supervisor_filter'); ?>
                         Period:
                         <select name="period" id="period" class="select2">
                             <option value="">Custom</option>

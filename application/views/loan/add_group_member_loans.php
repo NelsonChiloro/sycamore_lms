@@ -2,6 +2,9 @@
 if (!isset($loan_types) || !is_array($loan_types)) {
     $loan_types = array();
 }
+if (!isset($branches) || !is_array($branches)) {
+    $branches = function_exists('get_all') ? get_all('branches') : array();
+}
 ?>
 
 <div class="main-content">
@@ -46,6 +49,20 @@ if (!isset($loan_types) || !is_array($loan_types)) {
                                             <?php
                                             }
                                             ?>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div class="form-group row">
+                                    <label class="col-sm-3 col-form-label">Branch:</label>
+                                    <div class="col-sm-9">
+                                        <select name="branch_id" class="form-control select2" required>
+                                            <option value="">--select branch--</option>
+                                            <?php foreach ($branches as $branch) { ?>
+                                                <option value="<?php echo $branch->id; ?>" <?php echo set_select('branch_id', $branch->id); ?>>
+                                                    <?php echo htmlspecialchars($branch->BranchName . ' (' . $branch->Code . ')'); ?>
+                                                </option>
+                                            <?php } ?>
                                         </select>
                                     </div>
                                 </div>

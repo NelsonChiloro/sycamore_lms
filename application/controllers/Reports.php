@@ -46,6 +46,16 @@ public function portfolio_filter(){
 	$this->load->view('admin/footer');
 }
 
+public function portfolio_dashboard(){
+    $data = array(
+        'settings'      => get_by_id('settings', 'settings_id', '1'),
+        'node_base_url' => 'http://localhost:4500',
+    );
+    $this->load->view('admin/header', $data);
+    $this->load->view('reports/portfolio_dashboard', $data);
+    $this->load->view('admin/footer');
+}
+
 public function caparfilter(){
 	$officerid= $this->input->get('id');
     $productid= $this->input->get('productid');
@@ -274,12 +284,12 @@ private function get_summary_metrics()
 			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' THEN COALESCE(ps.padmin_fee, 0) ELSE 0 END) AS outstanding_af,
             SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS total_unpaid,
             SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS total_arrears,
-            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS one_day_arrears,
-            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 3 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS three_day_arrears,
-            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS week_arrears,
-            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS month_arrears,
-            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 60 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS two_month_arrears,
-            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS three_month_arrears,
+            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS one_day_arrears,
+            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 3 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS three_day_arrears,
+            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS week_arrears,
+            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS month_arrears,
+            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 60 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS two_month_arrears,
+            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS three_month_arrears,
             ROUND(
                 (
                     SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END)
@@ -395,7 +405,7 @@ private function run_summary_query($sql, $binds = array(), $multiple = false)
         $url = report_service_url('generate-report-par-principal-balance');
 
         // Prepare the data to be sent
-        $data = [
+        $data = array_merge([
             "report_type" => "PAR reports",
             "user" => $this->session->userdata('Firstname')." ".$this->session->userdata('Lastname'),
             "user_id" => $this->session->userdata('user_id'),
@@ -404,7 +414,7 @@ private function run_summary_query($sql, $binds = array(), $multiple = false)
             "branch" => $branch,
             "date_from" => $date_from,
             "date_to" => $date_to
-        ];
+        ], report_supervisor_curl_payload());
 
         // Convert the data array to JSON
         $jsonData = json_encode($data);
@@ -450,7 +460,7 @@ private function run_summary_query($sql, $binds = array(), $multiple = false)
         $url = report_service_url('generate-report-par-v2');
 
         // Prepare the data to be sent
-        $data = [
+        $data = array_merge([
             "report_type" => "Portfolio Loan Book",
             "user" => $this->session->userdata('Firstname')." ".$this->session->userdata('Lastname'),
             "user_id" => $this->session->userdata('user_id'),
@@ -459,7 +469,7 @@ private function run_summary_query($sql, $binds = array(), $multiple = false)
             "branch" => $branch,
             "date_from" => $date_from,
             "date_to" => $date_to
-        ];
+        ], report_supervisor_curl_payload());
 
         // Convert the data array to JSON
         $jsonData = json_encode($data);
@@ -644,15 +654,17 @@ public function tray(){
 		$search = $this->input->get('search');
 		$by_date = $this->input->get('by_date');
         $idofficer = $this->input->get('idofficer');
+        $supervisor_id = report_supervisor_input_value('get');
 		if($search=="filter"){
-			$data['loan_data'] = $this->Payement_schedules_model->arrears($product,$from,$to,$by_date,$idofficer );
+			$data['loan_data'] = $this->Payement_schedules_model->arrears($product,$from,$to,$by_date,$idofficer, $supervisor_id);
+			$data['arrears_total'] = $this->Payement_schedules_model->sum_institutional_arrears($product, $from, $to, $by_date, $idofficer, $supervisor_id);
 			$menu_toggle['toggles'] = 40;
 
 			$this->load->view('admin/header', $menu_toggle);
 			$this->load->view('reports/arrears',$data);
 			$this->load->view('admin/footer');
 		}elseif($search=='pdf'){
-			$data['loan_data'] = $this->Payement_schedules_model->arrears($product,$from,$to,$by_date,$idofficer);
+			$data['loan_data'] = $this->Payement_schedules_model->arrears($product,$from,$to,$by_date,$idofficer, $supervisor_id);
 
 			$data['product'] =($product=="All") ? "All loans" : get_by_id('loan','loan_id',$product)->loan_number;
 			$data['from'] = $from;
@@ -661,10 +673,11 @@ public function tray(){
 			$html = $this->load->view('reports/arrears_pdf', $data,true);
 			$this->pdf->createPDF($html, "Arrears report as on".date('Y-m-d'), true,'A4','landscape');
 		}elseif($search=='excel'){
-            $data['loan_data'] = $this->Payement_schedules_model->arrears($product,$from,$to,$by_date,$idofficer);
+            $data['loan_data'] = $this->Payement_schedules_model->arrears($product,$from,$to,$by_date,$idofficer, $supervisor_id);
 $this->excel_arrears($data);
 		}else {
-			$data['loan_data'] = $this->Payement_schedules_model->arrears($product,$from,$to,$by_date,$idofficer );
+			$data['loan_data'] = $this->Payement_schedules_model->arrears($product,$from,$to,$by_date,$idofficer, $supervisor_id);
+			$data['arrears_total'] = $this->Payement_schedules_model->sum_institutional_arrears($product, $from, $to, $by_date, $idofficer, $supervisor_id);
 			$menu_toggle['toggles'] = 40;
 
 			$this->load->view('admin/header', $menu_toggle);
@@ -712,7 +725,7 @@ $this->excel_arrears($data);
 		$dates = $this->input->get();
 		$search = $this->input->get('search');
 	if($search=='filter'){
-		$data['loan_data'] = $this->Payement_schedules_model->payment_date($dates['from'],$dates['to'],$dates['user'],$dates['product'],$dates['branch']);
+		$data['loan_data'] = $this->Payement_schedules_model->payment_date($dates['from'],$dates['to'],$dates['user'],$dates['product'],$dates['branch'], report_supervisor_input_value('get'));
 		$menu_toggle['toggles'] = 50;
 		$data['d_title'] = "Collection by dates";
 		$this->load->view('admin/header', $menu_toggle);
@@ -865,7 +878,7 @@ public function payments_filter() {
         $url = report_service_url('generate-report-transactions');
 
         // Prepare the data to be sent
-        $data = [
+        $data = array_merge([
             "report_type" => "PAYMENTS_TRANSACTIONS",
             "user" => $this->session->userdata('Firstname')." ".$this->session->userdata('Lastname'),
             "user_id" => $this->session->userdata('user_id'),
@@ -876,7 +889,7 @@ public function payments_filter() {
             "officer" => $officer,
             "from" => $from,
             "to" => $to
-        ];
+        ], report_supervisor_curl_payload());
 
         // Convert the data array to JSON
         $jsonData = json_encode($data);
@@ -950,7 +963,7 @@ public function payments_filter() {
         $url = report_service_url('generate-report-rbm-classification');
 
         // Prepare the data to be sent
-        $data = [
+        $data = array_merge([
             "report_type" => "RBM_CLASSIFICATION",
             "user" => $this->session->userdata('Firstname')." ".$this->session->userdata('Lastname'),
             "user_id" => $this->session->userdata('user_id'),
@@ -958,7 +971,7 @@ public function payments_filter() {
             "product" => $product,
             "officer" => $officer,
             "base_url" => base_url(),
-        ];
+        ], report_supervisor_curl_payload());
 
         // Convert the data array to JSON
         $jsonData = json_encode($data);
@@ -1084,17 +1097,7 @@ public function payments_filter() {
      * @return string RBM classification
      */
     private function determine_rbm_classification($days_in_arrears) {
-        if ($days_in_arrears < 30) {
-            return 'Standard';
-        } else if ($days_in_arrears >= 30 && $days_in_arrears < 60) {
-            return 'Special Mention';
-        } else if ($days_in_arrears >= 60 && $days_in_arrears < 90) {
-            return 'Substandard';
-        } else if ($days_in_arrears >= 90 && $days_in_arrears < 180) {
-            return 'Doubtful';
-        } else {
-            return 'Loss';
-        }
+        return determine_rbm_classification($days_in_arrears);
     }
 
     /**
@@ -1312,7 +1315,10 @@ public function payments_filter() {
             xlsWriteLabel($tablebody, $kolombody++, $data->loan_number);
             xlsWriteLabel($tablebody, $kolombody++, $data->product_name);
             xlsWriteLabel($tablebody, $kolombody++, $data->payment_schedule);
-            xlsWriteLabel($tablebody, $kolombody++, $data->amount);
+            $amount_due = isset($data->amount_due)
+                ? (float) $data->amount_due
+                : ((float) $data->amount - (float) $data->paid_amount);
+            xlsWriteNumber($tablebody, $kolombody++, $amount_due);
             xlsWriteLabel($tablebody, $kolombody++, $data->payment_number);
 
             xlsWriteLabel($tablebody, $kolombody++, $data->efname.' '.$data->elname);
