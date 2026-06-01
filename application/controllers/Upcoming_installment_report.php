@@ -37,6 +37,8 @@ class Upcoming_installment_report extends CI_Controller {
         $branch = $this->input->post('branch');
         $officer = $this->input->post('user');
         $product = $this->input->post('product');
+        $from_date = $this->input->post('from_date');
+        $to_date = $this->input->post('to_date');
 
         // Initialize cURL session
         $ch = curl_init();
@@ -45,14 +47,16 @@ class Upcoming_installment_report extends CI_Controller {
         $url = report_service_url('generate-report-upcoming-installment');
 
         // Prepare the data to be sent
-        $data = [
+        $data = array_merge([
             "report_type" => "UPCOMING_INSTALLMENT",
             "user" => $this->session->userdata('Firstname')." ".$this->session->userdata('Lastname'),
             "user_id" => $this->session->userdata('user_id'),
             "branch" => $branch,
             "officer" => $officer,
-            "product" => $product
-        ];
+            "product" => $product,
+            "from_date" => $from_date,
+            "to_date" => $to_date
+        ], report_supervisor_curl_payload());
 
         // Convert the data array to JSON
         $jsonData = json_encode($data);

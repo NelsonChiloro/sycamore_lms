@@ -1,5 +1,10 @@
 <?php
-$loan_types = $this->Loan_products_model->get_all();
+if (!isset($loan_types) || !is_array($loan_types)) {
+    $loan_types = array();
+}
+if (!isset($branches) || !is_array($branches)) {
+    $branches = function_exists('get_all') ? get_all('branches') : array();
+}
 ?>
 
 <div class="main-content">
@@ -45,6 +50,20 @@ $loan_types = $this->Loan_products_model->get_all();
                                             <?php
                                             }
                                             ?>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div class="form-group row">
+                                    <label class="col-sm-4 col-form-label">Branch:</label>
+                                    <div class="col-sm-8">
+                                        <select name="branch_id" class="form-control select2" required>
+                                            <option value="">--select branch--</option>
+                                            <?php foreach ($branches as $branch) { ?>
+                                                <option value="<?php echo $branch->id; ?>" <?php echo set_select('branch_id', $branch->id); ?>>
+                                                    <?php echo htmlspecialchars($branch->BranchName . ' (' . $branch->Code . ')'); ?>
+                                                </option>
+                                            <?php } ?>
                                         </select>
                                     </div>
                                 </div>
@@ -400,3 +419,43 @@ $loan_types = $this->Loan_products_model->get_all();
         color: #495057;
     }
 </style>
+
+<script>
+$(document).ready(function () {
+    var GL_MONTHLY_CODES = ['ZTGLBT', 'ZTGLLL'];
+
+    function getProductCode($select) {
+        var m = $select.find('option:selected').text().match(/\(([^:]+):/);
+        return m ? $.trim(m[1]) : '';
+    }
+
+    function isGroupZitsambaMonthly(optionText, code) {
+        var text = (optionText || '').toUpperCase();
+        return GL_MONTHLY_CODES.indexOf((code || '').toUpperCase()) !== -1
+            || (text.indexOf('GROUP LOAN PRODUCT') !== -1
+                && text.indexOf('ZITSAMBA') !== -1
+                && (text.indexOf(' LL') !== -1 || text.indexOf(' BT') !== -1));
+    }
+
+    function enforcePeriodLimit() {
+        var $months   = $('input[name="months"]');
+        var $select   = $('select[name="loan_type"]');
+        var code      = getProductCode($select);
+        var optionTxt = $select.find('option:selected').text();
+        var $hint     = $('#zitsamba-group-hint');
+        if (isGroupZitsambaMonthly(optionTxt, code)) {
+            $months.attr('max', 4);
+            if (parseInt($months.val()) > 4) { $months.val(4); }
+            if (!$hint.length) {
+                $months.closest('.input-group').after('<small id="zitsamba-group-hint" class="form-text text-warning font-weight-bold mt-1"><i class="fas fa-exclamation-triangle"></i> Maximum 4 months for Group Loan Product &ndash; Zitsamba.</small>');
+            }
+        } else {
+            $months.removeAttr('max');
+            $('#zitsamba-group-hint').remove();
+        }
+    }
+
+    $('select[name="loan_type"]').on('change', enforcePeriodLimit);
+    enforcePeriodLimit();
+});
+</script>

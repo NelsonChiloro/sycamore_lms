@@ -1,5 +1,14 @@
 <?php
-$loan_types = $this->Loan_products_model->get_all();
+$loan_types = isset($loan_types) && is_array($loan_types) ? $loan_types : array();
+if (empty($loan_types) && isset($this->Loan_products_model)) {
+    $loan_types = $this->Loan_products_model->get_all();
+}
+if (empty($loan_types) && function_exists('get_all')) {
+    $loan_types = get_all('loan_products');
+}
+if (!is_array($loan_types)) {
+    $loan_types = array();
+}
 ?>
 <div class="main-content">
     <div class="page-header">
@@ -180,3 +189,43 @@ $loan_types = $this->Loan_products_model->get_all();
         -webkit-overflow-scrolling: touch;
     }
 </style>
+
+<script>
+$(document).ready(function () {
+    var GL_MONTHLY_CODES = ['ZTGLBT', 'ZTGLLL'];
+
+    function getProductCode($select) {
+        var m = $select.find('option:selected').text().match(/\(([^:]+):/);
+        return m ? $.trim(m[1]) : '';
+    }
+
+    function isGroupZitsambaMonthly(optionText, code) {
+        var text = (optionText || '').toUpperCase();
+        return GL_MONTHLY_CODES.indexOf((code || '').toUpperCase()) !== -1
+            || (text.indexOf('GROUP LOAN PRODUCT') !== -1
+                && text.indexOf('ZITSAMBA') !== -1
+                && (text.indexOf(' LL') !== -1 || text.indexOf(' BT') !== -1));
+    }
+
+    function enforcePeriodLimit() {
+        var $months   = $('#months');
+        var $selected = $('#loan_type').find('option:selected');
+        var code      = getProductCode($('#loan_type'));
+        var optionTxt = $selected.text();
+        var $hint     = $('#zitsamba-calc-hint');
+        if (isGroupZitsambaMonthly(optionTxt, code)) {
+            $months.attr('max', 4);
+            if (parseInt($months.val()) > 4) { $months.val(4); }
+            if (!$hint.length) {
+                $months.closest('.form-group').append('<small id="zitsamba-calc-hint" class="form-text text-warning font-weight-bold"><i class="fa fa-exclamation-triangle"></i> Maximum 4 months for Group Loan Product &ndash; Zitsamba.</small>');
+            }
+        } else {
+            $months.removeAttr('max');
+            $('#zitsamba-calc-hint').remove();
+        }
+    }
+
+    $('#loan_type').on('change', enforcePeriodLimit);
+    enforcePeriodLimit();
+});
+</script>

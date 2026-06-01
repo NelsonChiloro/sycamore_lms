@@ -29,7 +29,7 @@ $products = get_all('loan_products');
 					}
 					?>
                 </select>
-                    Officer: <select name="user" id="" class="select2">
+                    Officer: <select name="user" id="report-filter-officer" class="select2">
 					<option value="">All officers</option>
 					<?php
 
@@ -40,6 +40,7 @@ $products = get_all('loan_products');
 					}
 					?>
 				</select>
+                <?php $this->load->view('reports/_relationship_supervisor_filter'); ?>
                 Product: <select name="product" id="" class="select2">
 					<option value="">All product</option>
 					<?php
@@ -69,6 +70,7 @@ $products = get_all('loan_products');
 					<th>Amount to collect</th>
 					<th>Payment number</th>
 					<th>Officer</th>
+					<th>Relationship Supervisor</th>
 					<th>Action</th>
 
 				</tr>
@@ -94,7 +96,7 @@ $products = get_all('loan_products');
 					<tr>
 
 						<td><?php echo $n ?></td>
-						<td><?php echo $loan->BranchName  ?></td>
+						<td><?php echo !empty($loan->branch_display_name) ? htmlspecialchars($loan->branch_display_name) : (!empty($loan->BranchName) ? htmlspecialchars($loan->BranchName) : 'N/A'); ?></td>
 						<td><a href="<?php echo base_url($preview_url).$loan->loan_customer?>"><?php echo $customer_name?></a></td>
 						<td><?php echo isset($loan->customer_group_name) ? $loan->customer_group_name : 'N/A' ?></td>
 
@@ -105,6 +107,7 @@ $products = get_all('loan_products');
 						<td><?php echo $loan->amount ?></td>
 						<td><?php echo $loan->payment_number ?></td>
 						<td><?php echo $loan->efname." ".$loan->elname ?></td>
+						<td><?php echo htmlspecialchars(report_format_supervisor_name($loan)); ?></td>
 
 						<td><a href="<?php echo base_url('loan/view/').$loan->loan_id?>">View</a></td>
 
@@ -115,15 +118,13 @@ $products = get_all('loan_products');
 				?>
 				</tbody>
 				<tfoot>
-				<th></th>
-				<th></th>
-				<th></th>
-				<th></th>
-				<th></th>
-				<th></th>
+				<tr>
+				<th colspan="7" style="text-align:right;">Total</th>
+				<th class="collection-total-cell">MK<?php echo number_format($totals,2)?></th>
                 <th></th>
-				<th>MK<?php echo number_format($totals,2)?></th>
-                <th></th>
+				<th></th>
+				<th></th>
+				</tr>
 				</tfoot>
 			</table>
 		</div>

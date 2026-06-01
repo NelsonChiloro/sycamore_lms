@@ -11,6 +11,8 @@
     </div>
     <div class="card">
         <div class="card-body" style="border: thick #153505 solid;border-radius: 14px;">
+            <?php if (!empty($show_loan_filters)) { $this->load->view('loan/_loan_list_filters'); } ?>
+            <hr>
             <div style="overflow-y: auto"">
             <table  id="data-table" class="tableCss">
                 <thead>
@@ -36,7 +38,7 @@
                 </tr>
                 </thead>
                 <tbody><?php
-                $n = 1;
+                $n = isset($list_offset) ? ($list_offset + 1) : 1;
 
                 $mandate_fees = FALSE;
                 foreach ($loan_data as $loan)
@@ -58,7 +60,11 @@
                         <td><?php echo $n ?></td>
                         <td><?php echo $loan->loan_number ?></td>
                         <td><?php echo $loan->product_name ?></td>
-                        <td><a href="<?php echo base_url('individual_customers/view/').$loan->id?>""><?php echo $loan->Firstname." ".$loan->Lastname?></a></td>
+                        <?php
+                        $preview_url = ($loan->customer_type == 'group') ? 'Customer_groups/members/' : 'Individual_customers/view/';
+                        $customer_name = !empty($loan->customer_display_name) ? $loan->customer_display_name : (!empty($loan->customer_nam) ? $loan->customer_nam : 'Unknown');
+                        ?>
+                        <td><a href="<?php echo base_url($preview_url).$loan->loan_customer?>"><?php echo htmlspecialchars($customer_name); ?></a></td>
                         <td><?php echo $loan->loan_date ?></td>
                         <td>MK<?php echo number_format($loan->loan_principal,2) ?></td>
                         <td><?php echo $loan->loan_period ?></td>
@@ -89,6 +95,7 @@
                 </tbody>
             </table>
         </div>
+        <?php $this->load->view('loan/_loan_list_pagination'); ?>
         </div>
     </div>
 </div>

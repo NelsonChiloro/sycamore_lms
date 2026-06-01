@@ -1,4 +1,11 @@
 const moment = require('moment');
+const {
+    determineRBMClassification,
+    getOfficerIdsUnderSupervisor,
+    sqlRelationshipSupervisorNameExpr,
+    sqlBranchJoin,
+    appendBranchFilter
+} = require('./databaseHelpers');
 const fs = require('fs');
 const path = require('path');
 
@@ -18,13 +25,18 @@ async function generateUpcomingInstallmentReport(filterOptions, reportId, report
 
     // Set initial progress
     reportTrackers[reportId].percentage = 5;
+    const asOfDate = filterOptions.to || moment().format('YYYY-MM-DD');
 
     try {
         // Get upcoming installment data based on filters
         const result = await getUpcomingInstallmentData(
             filterOptions.user || '',
+            filterOptions.supervisor,
             filterOptions.product || '',
             filterOptions.branch || '',
+            filterOptions.from || '',
+            filterOptions.to || '',
+            asOfDate,
             reportId,
             reportTrackers,
             db
@@ -35,7 +47,9 @@ async function generateUpcomingInstallmentReport(filterOptions, reportId, report
             ...filterOptions,
             branchName: result.filterBranchName,
             userName: result.filterOfficerName,
-            productName: result.filterProductName
+            productName: result.filterProductName,
+            fromDate: result.filterFromDate,
+            toDate: result.filterToDate
         };
 
         // Generate HTML using the data
@@ -63,20 +77,32 @@ async function generateUpcomingInstallmentReport(filterOptions, reportId, report
  * @param {Object} db - Database connection
  * @returns {Promise<Object>} - Upcoming payment data with filter names
  */
-async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId, reportTrackers, db) {
-    return new Promise((resolve, reject) => {
-        if (!db) {
-            return reject(new Error('Database connection is not available'));
-        }
+async function getUpcomingInstallmentData(loanOfficer, supervisor, product, branch, fromDate, toDate, asOfDate, reportId, reportTrackers, db) {
+    if (!db) {
+        throw new Error('Database connection is not available');
+    }
 
-        // Update progress
-        reportTrackers[reportId].percentage = 10;
-        console.log('Fetching upcoming installment data...');
+    reportTrackers[reportId].percentage = 10;
+    console.log('Fetching upcoming installment data...');
+
+    let supervisorOfficerFilter = '';
+    if (supervisor && supervisor !== 'All') {
+        const officerIds = await getOfficerIdsUnderSupervisor(supervisor);
+        if (!officerIds.length) {
+            supervisorOfficerFilter = '1=0';
+        } else {
+            supervisorOfficerFilter = `loan.loan_added_by IN (${officerIds.join(',')})`;
+        }
+    }
+
+    return new Promise((resolve, reject) => {
 
         // Get branch, officer, and product names for the filters (for display in report header)
         let filterBranchName = 'All Branches';
         let filterOfficerName = 'All Officers';
         let filterProductName = 'All Products';
+        let filterFromDate = fromDate || 'Any';
+        let filterToDate = toDate || 'Any';
 
         // Promise array for getting the filter names
         const filterPromises = [];
@@ -85,7 +111,7 @@ async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId
         if (branch) {
             filterPromises.push(
                 new Promise((resolveFilter, rejectFilter) => {
-                    db.query('SELECT BranchName FROM branches WHERE Code = ?', [branch], (err, result) => {
+                    db.query('SELECT BranchName FROM branches WHERE id = ? OR Code = ? LIMIT 1', [branch, branch], (err, result) => {
                         if (err) return rejectFilter(err);
                         if (result && result.length > 0) {
                             filterBranchName = result[0].BranchName;
@@ -130,6 +156,37 @@ async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId
         Promise.all(filterPromises)
             .then(() => {
                 // Build the query - replicating the model's next_payment function
+                const conditions = [
+                    "loan.loan_status = 'ACTIVE'",
+                    "payement_schedules.payment_number = loan.next_payment_id"
+                ];
+                const params = [];
+                if (supervisorOfficerFilter) {
+                    conditions.push(supervisorOfficerFilter);
+                } else if (loanOfficer) {
+                    conditions.push('loan.loan_added_by = ?');
+                    params.push(loanOfficer);
+                }
+                if (product) {
+                    conditions.push('loan.loan_product = ?');
+                    params.push(product);
+                }
+                if (branch) {
+                    let branchClause = '';
+                    branchClause = appendBranchFilter(branchClause, params, branch, 'loan');
+                    if (branchClause) {
+                        conditions.push(branchClause.replace(/^\s*AND\s+/i, ''));
+                    }
+                }
+                if (fromDate) {
+                    conditions.push('DATE(payement_schedules.payment_schedule) >= ?');
+                    params.push(fromDate);
+                }
+                if (toDate) {
+                    conditions.push('DATE(payement_schedules.payment_schedule) <= ?');
+                    params.push(toDate);
+                }
+
                 const query = `
                     SELECT
                         payement_schedules.*,
@@ -137,6 +194,7 @@ async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId
                         loan_products.*,
                         employees.Firstname as efname,
                         employees.Lastname as elname,
+                        ${sqlRelationshipSupervisorNameExpr('rel_sup')} as relationship_supervisor,
                         individual_customers.Firstname as ifname,
                         individual_customers.Lastname as ilname,
                         branches.BranchName,
@@ -154,20 +212,11 @@ async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId
                             LEFT JOIN
                         employees ON employees.id = loan.loan_added_by
                             LEFT JOIN
-                        branches ON branches.id = loan.branch
+                        employees rel_sup ON rel_sup.id = employees.Supervisor
+                            ${sqlBranchJoin('loan', 'branches')}
                     WHERE
-                        loan.loan_status = 'ACTIVE'
-                      AND payement_schedules.payment_number = loan.next_payment_id
-                        ${loanOfficer ? 'AND loan.loan_added_by = ?' : ''}
-                        ${product ? 'AND loan.loan_product = ?' : ''}
-                        ${branch ? 'AND loan.branch = ?' : ''}
+                        ${conditions.join(' AND ')}
                 `;
-
-                // Build params array
-                const params = [];
-                if (loanOfficer) params.push(loanOfficer);
-                if (product) params.push(product);
-                if (branch) params.push(branch);
 
                 // Execute the query
                 db.query(query, params, async (err, payments) => {
@@ -206,11 +255,11 @@ async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId
                             }
 
                             // Get amount in arrears and days in arrears
-                            const amountInArrears = await getAmountOfArrears(db, payment.loan_id);
-                            const daysInArrears = await getDaysOfArrears(db, payment.loan_id);
+                            const amountInArrears = await getAmountOfArrears(db, payment.loan_id, asOfDate);
+                            const daysInArrears = await getDaysOfArrears(db, payment.loan_id, asOfDate);
 
                             // Get number of installments in arrears
-                            const installmentsInArrears = await getInstallmentsInArrears(db, payment.loan_id);
+                            const installmentsInArrears = await getInstallmentsInArrears(db, payment.loan_id, asOfDate);
 
                             // Get last transaction date
                             const lastTransactionDate = await getLastTransactionDate(db, payment.loan_id);
@@ -225,7 +274,6 @@ async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId
 
                             // Calculate total due (upcoming installment amount + any arrears)
                             // Calculate total due: sum of NOT PAID pay_amounts for due/arrears minus sum of paid amounts for due/arrears
-                            const currentDate = moment().format('YYYY-MM-DD');
                             let totalDue = 0;
                             // Sum all NOT PAID pay_amounts for due/arrears
                             const [notPaidRows] = await new Promise((resolve, reject) => {
@@ -233,7 +281,7 @@ async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId
                                     `SELECT SUM(amount) as total_due
                                      FROM payement_schedules
                                      WHERE loan_id = ? AND status = 'NOT PAID' AND payment_schedule <= ?`,
-                                    [payment.loan_id, currentDate],
+                                    [payment.loan_id, asOfDate],
                                     (err, results) => {
                                         if (err) return reject(err);
                                         resolve([results]);
@@ -246,7 +294,7 @@ async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId
                                     `SELECT SUM(paid_amount) as total_paid
                                      FROM payement_schedules
                                      WHERE loan_id = ? AND status = 'NOT PAID' AND payment_schedule <= ?`,
-                                    [payment.loan_id, currentDate],
+                                    [payment.loan_id, asOfDate],
                                     (err, results) => {
                                         if (err) return reject(err);
                                         resolve([results]);
@@ -272,8 +320,10 @@ async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId
                                 overpayment: overpayment,
                                 last_transaction_date: lastTransaction,
                                 days_in_arrears: daysInArrears,
+                                rbm_classification: determineRBMClassification(daysInArrears),
                                 installments_in_arrears: installmentsInArrears,
-                                officer_name: `${payment.efname} ${payment.elname}`
+                                officer_name: `${payment.efname || ''} ${payment.elname || ''}`.trim() || 'N/A',
+                                relationship_supervisor: payment.relationship_supervisor || 'N/A'
                             };
 
                             upcomingPayments.push(paymentData);
@@ -290,7 +340,9 @@ async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId
                         upcomingPayments,
                         filterBranchName,
                         filterOfficerName,
-                        filterProductName
+                        filterProductName,
+                        filterFromDate,
+                        filterToDate
                     });
                 });
             })
@@ -308,17 +360,15 @@ async function getUpcomingInstallmentData(loanOfficer, product, branch, reportId
  * @param {number} loanId - Loan ID
  * @returns {Promise<number>} - Amount in arrears
  */
-async function getAmountOfArrears(db, loanId) {
+async function getAmountOfArrears(db, loanId, asOfDate) {
     return new Promise((resolve, reject) => {
-        const currentDate = moment().format('YYYY-MM-DD');
-
         db.query(
             `SELECT SUM(amount - paid_amount) as total_arrears
              FROM payement_schedules
              WHERE loan_id = ?
                AND payment_schedule < ?
                AND status = 'NOT PAID'`,
-            [loanId, currentDate],
+            [loanId, asOfDate],
             (err, results) => {
                 if (err) return reject(err);
                 const totalArrears = results[0] && results[0].total_arrears ? parseFloat(results[0].total_arrears) : 0;
@@ -335,9 +385,9 @@ async function getAmountOfArrears(db, loanId) {
  * @param {number} loanId - Loan ID
  * @returns {Promise<number>} - Days in arrears
  */
-async function getDaysOfArrears(db, loanId) {
+async function getDaysOfArrears(db, loanId, asOfDate) {
     return new Promise((resolve, reject) => {
-        const currentDate = moment();
+        const referenceDate = moment(asOfDate);
 
         db.query(
             `SELECT payment_schedule
@@ -345,7 +395,7 @@ async function getDaysOfArrears(db, loanId) {
              WHERE loan_id = ? AND payment_schedule < ? AND status = 'NOT PAID'
              ORDER BY payment_schedule ASC
                  LIMIT 1`,
-            [loanId, currentDate.format('YYYY-MM-DD')],
+            [loanId, referenceDate.format('YYYY-MM-DD')],
             (err, results) => {
                 if (err) return reject(err);
 
@@ -353,7 +403,7 @@ async function getDaysOfArrears(db, loanId) {
                     resolve(0); // No arrears
                 } else {
                     const paymentDate = moment(results[0].payment_schedule);
-                    const daysInArrears = currentDate.diff(paymentDate, 'days');
+                    const daysInArrears = referenceDate.diff(paymentDate, 'days');
                     resolve(daysInArrears > 0 ? daysInArrears : 0);
                 }
             }
@@ -368,15 +418,13 @@ async function getDaysOfArrears(db, loanId) {
  * @param {number} loanId - Loan ID
  * @returns {Promise<number>} - Number of installments in arrears
  */
-async function getInstallmentsInArrears(db, loanId) {
+async function getInstallmentsInArrears(db, loanId, asOfDate) {
     return new Promise((resolve, reject) => {
-        const currentDate = moment().format('YYYY-MM-DD');
-
         db.query(
             `SELECT COUNT(*) as count
              FROM payement_schedules
              WHERE loan_id = ? AND status = 'NOT PAID' AND payment_schedule < ?`,
-            [loanId, currentDate],
+            [loanId, asOfDate],
             (err, results) => {
                 if (err) return reject(err);
                 resolve(results[0] ? parseInt(results[0].count || 0) : 0);
@@ -529,8 +577,10 @@ function generateHtml(upcomingPayments, filterOptions) {
             <td>${formatCurrency(payment.overpayment)}</td>
             <td>${payment.last_transaction_date}</td>
             <td>${payment.days_in_arrears}</td>
+            <td>${payment.rbm_classification || 'Standard'}</td>
             <td>${payment.installments_in_arrears}</td>
             <td>${payment.officer_name}</td>
+            <td>${payment.relationship_supervisor || 'N/A'}</td>
         </tr>`;
     });
 
@@ -649,6 +699,8 @@ function generateHtml(upcomingPayments, filterOptions) {
                 <p><strong>Branch:</strong> ${filterOptions.branchName || 'All Branches'}</p>
                 <p><strong>Loan Officer:</strong> ${filterOptions.userName || 'All Officers'}</p>
                 <p><strong>Loan Product:</strong> ${filterOptions.productName || 'All Products'}</p>
+                <p><strong>From Date:</strong> ${filterOptions.fromDate || 'Any'}</p>
+                <p><strong>To Date:</strong> ${filterOptions.toDate || 'Any'}</p>
             </div>
             
             <div class="export-buttons">
@@ -664,27 +716,35 @@ function generateHtml(upcomingPayments, filterOptions) {
                     <thead>
                         <!-- Filter information rows (included in export) -->
                         <tr class="filter-header">
-                            <td colspan="14">Upcoming Installment Report - Filter Information</td>
+                            <td colspan="17">Upcoming Installment Report - Filter Information</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="3">Branch:</td>
-                            <td colspan="11">${filterOptions.branchName || 'All Branches'}</td>
+                            <td colspan="14">${filterOptions.branchName || 'All Branches'}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="3">Loan Officer:</td>
-                            <td colspan="11">${filterOptions.userName || 'All Officers'}</td>
+                            <td colspan="14">${filterOptions.userName || 'All Officers'}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="3">Loan Product:</td>
-                            <td colspan="11">${filterOptions.productName || 'All Products'}</td>
+                            <td colspan="14">${filterOptions.productName || 'All Products'}</td>
+                        </tr>
+                        <tr class="report-info">
+                            <td colspan="3">From Date:</td>
+                            <td colspan="14">${filterOptions.fromDate || 'Any'}</td>
+                        </tr>
+                        <tr class="report-info">
+                            <td colspan="3">To Date:</td>
+                            <td colspan="14">${filterOptions.toDate || 'Any'}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="3">Report Date:</td>
-                            <td colspan="11">${moment().format('YYYY-MM-DD HH:mm:ss')}</td>
+                            <td colspan="14">${moment().format('YYYY-MM-DD HH:mm:ss')}</td>
                         </tr>
                         <!-- Empty row for spacing -->
                         <tr>
-                            <td colspan="14">&nbsp;</td>
+                            <td colspan="17">&nbsp;</td>
                         </tr>
                         <!-- Data header row -->
                         <tr>
@@ -701,8 +761,10 @@ function generateHtml(upcomingPayments, filterOptions) {
                             <th>Overpayment/Balance</th>
                             <th>Last Transaction Date</th>
                             <th>No of Days in Arrears</th>
+                            <th>RBM Loan Classification</th>
                             <th>Number of Instalments in Arrears</th>
-                            <th>Officer</th>
+                            <th>Loan Officer</th>
+                            <th>Relationship Supervisor</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -710,14 +772,23 @@ function generateHtml(upcomingPayments, filterOptions) {
                     </tbody>
                     <tfoot>
                         <tr>
-                            <td colspan="5">Totals</td>
+                            <td>Totals</td>
+                            <td></td>
+                            <td></td>
+                            <td></td>
+                            <td></td>
                             <td>${formatCurrency(totalDisbursed)}</td>
                             <td></td>
                             <td>${formatCurrency(totalInstallmentAmount)}</td>
                             <td>${formatCurrency(totalArrears)}</td>
                             <td>${formatCurrency(totalDue)}</td>
                             <td>${formatCurrency(totalOverpayment)}</td>
-                            <td colspan="4"></td>
+                            <td></td>
+                            <td></td>
+                            <td></td>
+                            <td></td>
+                            <td></td>
+                            <td></td>
                         </tr>
                     </tfoot>
                 </table>

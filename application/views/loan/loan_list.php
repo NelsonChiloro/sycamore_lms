@@ -11,6 +11,8 @@
 	</div>
 	<div class="card">
 		<div class="card-body" style="border: thick #153505 solid;border-radius: 14px;">
+            <?php if (!empty($show_loan_filters)) { $this->load->view('loan/_loan_list_filters'); } ?>
+            <hr>
             <div style="overflow-y: auto"">
         <table  id="data-table" class="table">
 			<thead>
@@ -42,16 +44,8 @@
 			<tbody><?php
             foreach ($loan_data as $loan)
             {
-                if($loan->customer_type=='group'){
-                    $group = $this->Groups_model->get_by_id($loan->loan_customer);
-
-                    $customer_name = $group->group_name.'('.$group->group_code.')';
-                    $preview_url = "Customer_groups/members/";
-                }elseif($loan->customer_type=='individual'){
-                    $indi = $this->Individual_customers_model->get_by_id($loan->loan_customer);
-                    $customer_name = $indi->Firstname.' '.$indi->Lastname;
-                    $preview_url = "Individual_customers/view/";
-                }
+                $preview_url = ($loan->customer_type == 'group') ? 'Customer_groups/members/' : 'Individual_customers/view/';
+                $customer_name = !empty($loan->customer_display_name) ? $loan->customer_display_name : (!empty($loan->customer_nam) ? $loan->customer_nam : 'Unknown');
                 ?>
                 <tr>
 
@@ -82,6 +76,7 @@
 			</tbody>
         </table>
         </div>
+        <?php $this->load->view('loan/_loan_list_pagination'); ?>
 		</div>
 	</div>
 </div>

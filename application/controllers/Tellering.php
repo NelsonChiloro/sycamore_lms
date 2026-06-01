@@ -11,6 +11,9 @@ class Tellering extends CI_Controller
         $this->load->model('Tellering_model');
         $this->load->model('Account_model');
         $this->load->model('Transaction_model');
+        $this->load->model('Transactions_model');
+        $this->load->model('Loan_model');
+        $this->load->model('Payement_schedules_model');
         $this->load->model('Vault_cashier_pends_model');
         $this->load->model('Cashier_vault_pends_model');
         $this->load->library('form_validation');
@@ -90,11 +93,90 @@ class Tellering extends CI_Controller
         curl_close($ch);
     }
 
+    public function generate_track_transactions_report()
+    {
+        $from = trim((string)$this->input->post('from', TRUE));
+        $to = trim((string)$this->input->post('to', TRUE));
+        $customer_name = trim((string)$this->input->post('customer_name', TRUE));
+        $loan_number = trim((string)$this->input->post('loan_number', TRUE));
+        $transaction_type = trim((string)$this->input->post('transaction_type', TRUE));
+
+        $ch = curl_init();
+        $url = report_service_url('generate-report-track-transactions');
+
+        $data = [
+            'report_type' => 'TRACK_TRANSACTIONS',
+            'user' => $this->session->userdata('Firstname') . " " . $this->session->userdata('Lastname'),
+            'user_id' => $this->session->userdata('user_id'),
+            'from' => $from,
+            'to' => $to,
+            'customer_name' => $customer_name,
+            'loan_number' => $loan_number,
+            'transaction_type' => $transaction_type,
+        ];
+
+        $jsonData = json_encode($data);
+
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: application/json',
+            'Content-Length: ' . strlen($jsonData)
+        ]);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonData);
+
+        $response = curl_exec($ch);
+
+        if (curl_errno($ch)) {
+            $this->toaster->error('Error: ' . curl_error($ch));
+        } else {
+            $this->toaster->success('Success! Transaction tracking report is being processed. You may do other things and come back to check progress.');
+            redirect(site_url('report'));
+        }
+
+        curl_close($ch);
+    }
+
     public function track_transactions_view()
     {
 
+        $should_fetch = $this->input->get('run', TRUE) === '1';
+
+        $filters = array(
+            'from' => trim((string)$this->input->get('from', TRUE)),
+            'to' => trim((string)$this->input->get('to', TRUE)),
+            'customer_name' => trim((string)$this->input->get('customer_name', TRUE)),
+            'loan_number' => trim((string)$this->input->get('loan_number', TRUE)),
+            'transaction_type' => trim((string)$this->input->get('transaction_type', TRUE)),
+        );
+
+        $loan_payment_loan = null;
+        $loan_payment_rows = array();
+        $loan_payment_message = '';
+
+        if ($should_fetch && $filters['loan_number'] !== '') {
+            $loan_payment_loan = $this->Loan_model->get_one($filters['loan_number']);
+
+            $loan_payment_rows = $this->Transaction_model->track_transactions($filters['loan_number']);
+
+            if (empty($loan_payment_rows)) {
+                $loan_payment_message = 'No loan account transactions were found for the selected loan number.';
+            }
+        }
+
+        $data = array(
+            'filters' => $filters,
+            'should_fetch' => $should_fetch,
+            'transaction_types' => $this->db->order_by('name', 'ASC')->get('transaction_type')->result(),
+            'transactions_data' => $should_fetch ? $this->Transactions_model->get_tracked_transactions($filters) : array(),
+            'loan_payment_loan' => $loan_payment_loan,
+            'loan_payment_rows' => $loan_payment_rows,
+            'loan_payment_message' => $loan_payment_message,
+        );
+
         $this->load->view('admin/header');
-        $this->load->view('tellering/transactions_view');
+        $this->load->view('tellering/transactions_view', $data);
         $this->load->view('admin/footer');
 
     }

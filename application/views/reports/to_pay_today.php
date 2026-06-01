@@ -88,7 +88,7 @@ $products = get_all('loan');
 				<th></th>
 				<th></th>
 				<th></th>
-				<th>MK<?php echo number_format($totals,2)?></th>
+				<th class="collection-total-cell">MK<?php echo number_format($totals,2)?></th>
 				<th></th>
 				<th></th>
 				</tfoot>

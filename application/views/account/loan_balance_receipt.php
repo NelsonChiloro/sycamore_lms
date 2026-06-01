@@ -475,7 +475,7 @@ $settings = get_by_id('settings','settings_id','1');
                 <label>LOAN ACCOUNT Number</label>
             </div>
             <div class="customer-details">
-                <span><label class="amount-label">Current deposit -MWK  :<?php echo number_format($amount,2)?>&nbsp;|Total loan_payments -MWK  :<?php echo number_format($total_paid_amount,2)?> &nbsp&nbsp;|&nbsp&nbsp;Loan Balance  MK: <?php  echo number_format($total_amount-$total_paid_amount,2); ?> | Next Payment Date:<?php echo $next_date; ?></label> </span><input type="text"  style="font-size: 5px;" value="">
+                <span><label class="amount-label">Current deposit -MWK  :<?php echo number_format($amount,2)?>&nbsp;|Total loan_payments -MWK  :<?php echo number_format($total_paid_amount,2)?> &nbsp&nbsp;|&nbsp&nbsp;Loan Balance  MK: <?php echo number_format(isset($remaining_balance) ? $remaining_balance : ($total_amount - $total_paid_amount), 2); ?> | Next Payment Date:<?php echo $next_date; ?></label> </span><input type="text"  style="font-size: 5px;" value="">
                 <label for="customername">Name</label><input id="customername" type="text" name="customername" value="<?php echo $name ?>">
                 <span class="detail-tip"><em>(Please print)</em></span>
                 <label for="checkdate">Date</label><input id="checkdate" type="text" name="checkdate" value="<?php  $datee = date_create($date)->format('Y-m-d');echo $datee; ?>">

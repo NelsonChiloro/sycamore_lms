@@ -1,6 +1,12 @@
 const moment = require('moment');
 const fs = require('fs');
 const path = require('path');
+const {
+    sqlBranchJoin,
+    determineRBMClassification,
+    getOfficerIdsUnderSupervisor,
+    sqlRelationshipSupervisorNameExpr
+} = require('./databaseHelpers');
 /**
  * Generate an RBM Loan Classification Report HTML
  *
@@ -53,12 +59,22 @@ async function generateRBMClassificationReport(filterOptions, reportId, reportTr
 
         // Apply branch filter if not 'All'
         if (filterOptions.branch && filterOptions.branch !== 'All') {
-            whereConditions.push('l.branch = ?');
-            params.push(filterOptions.branch);
+            whereConditions.push(`(
+                l.branch = ?
+                OR l.branch IN (SELECT Code FROM branches WHERE id = ?)
+                OR l.branch IN (SELECT BranchCode FROM branches WHERE id = ?)
+            )`);
+            params.push(filterOptions.branch, filterOptions.branch, filterOptions.branch);
         }
 
-        // Apply loan officer filter if not 'All'
-        if (filterOptions.officer && filterOptions.officer !== 'All') {
+        if (filterOptions.supervisor && filterOptions.supervisor !== 'All') {
+            const officerIds = await getOfficerIdsUnderSupervisor(filterOptions.supervisor);
+            if (!officerIds.length) {
+                whereConditions.push('1=0');
+            } else {
+                whereConditions.push(`l.loan_added_by IN (${officerIds.join(',')})`);
+            }
+        } else if (filterOptions.officer && filterOptions.officer !== 'All') {
             whereConditions.push('l.loan_added_by = ?');
             params.push(filterOptions.officer);
         }
@@ -85,11 +101,13 @@ async function generateRBMClassificationReport(filterOptions, reportId, reportTr
                 l.loan_product, l.loan_added_by, l.branch,
                 p.product_name,
                 e.Firstname as officer_firstname, e.Lastname as officer_lastname,
+                ${sqlRelationshipSupervisorNameExpr('rel_sup')} as relationship_supervisor,
                 b.BranchName
             FROM loan l
             LEFT JOIN loan_products p ON l.loan_product = p.loan_product_id
             LEFT JOIN employees e ON l.loan_added_by = e.id
-            LEFT JOIN branches b ON l.branch = b.id
+            LEFT JOIN employees rel_sup ON rel_sup.id = e.Supervisor
+            ${sqlBranchJoin('l', 'b')}
             ${whereClause}
         `;
 
@@ -170,6 +188,7 @@ async function generateRBMClassificationReport(filterOptions, reportId, reportTr
                     rbm_classification: rbmClassification,
                     branch_name: loan.BranchName || 'N/A',
                     loan_officer: `${loan.officer_firstname || ''} ${loan.officer_lastname || ''}`.trim() || 'N/A',
+                    relationship_supervisor: loan.relationship_supervisor || 'N/A',
                     product_name: loan.product_name || 'N/A'
                 };
 
@@ -320,26 +339,6 @@ async function getCustomerName(db, customerId, customerType) {
             );
         }
     });
-}
-
-/**
- * Determine RBM classification based on days in arrears
- *
- * @param {number} daysInArrears - Number of days in arrears
- * @returns {string} - RBM classification
- */
-function determineRBMClassification(daysInArrears) {
-    if (daysInArrears < 30) {
-        return 'Standard';
-    } else if (daysInArrears >= 30 && daysInArrears < 60) {
-        return 'Special Mention';
-    } else if (daysInArrears >= 60 && daysInArrears < 90) {
-        return 'Substandard';
-    } else if (daysInArrears >= 90 && daysInArrears < 180) {
-        return 'Doubtful';
-    } else {
-        return 'Loss';
-    }
 }
 
 /**
@@ -584,6 +583,7 @@ function generateRBMReportHtml(baseUrl, loans, classificationData, totalPortfoli
                 <td>${loan.rbm_classification}</td>
                 <td>${loan.branch_name}</td>
                 <td>${loan.loan_officer}</td>
+                <td>${loan.relationship_supervisor || 'N/A'}</td>
                 <td><a href="${url}" target="_blank">Add risk Officer</a></td>
             </tr>
         `;
@@ -593,7 +593,7 @@ function generateRBMReportHtml(baseUrl, loans, classificationData, totalPortfoli
     if (loanDetailsRows === '') {
         loanDetailsRows = `
             <tr>
-                <td colspan="10" class="no-data">No loans matching the filter criteria</td>
+                <td colspan="11" class="no-data">No loans matching the filter criteria</td>
             </tr>
         `;
     }
@@ -783,6 +783,7 @@ function generateRBMReportHtml(baseUrl, loans, classificationData, totalPortfoli
                         <th>RBM Classification</th>
                         <th>Branch</th>
                         <th>Loan Officer</th>
+                        <th>Relationship Supervisor</th>
                         <th>Action</th>
                     </tr>
                 </thead>

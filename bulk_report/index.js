@@ -5,11 +5,13 @@ const moment = require('moment');
 const fs = require('fs');
 const path= require('path');
 const { processBatchLoanDateUpdate } = require('./loanDateBatchEditor');
+const { computeAndStorePortfolioDashboard, getLatestPortfolioDashboard } = require('./portfolioDashboard');
 const { generateLoanPortfolioReport } = require('./loanPortfolioReport');
 const { generateLoanPortfolioWriteOffReport } = require('./loanPortfolioWriteOffReport');
 const { generateLoanCollectionsReport } = require('./loanCollectionReport');
 const { generateUpcomingInstallmentReport } = require('./upcomingInstallmentReport');
 const { generateTransactionsReport } = require('./transactionsReport');
+const { generateTrackTransactionsReport } = require('./trackTransactionsReport');
 const { generateRBMClassificationReport } = require('./rbmClassificationReport');
 const { generateArrearsReport } = require('./arrearsReport');
 const { generateLoanDepositsReport } = require('./loanDepositsReport');
@@ -41,9 +43,11 @@ const {
     getNumberOfArrears,
     getLastPaidPaymentByLoanId,
   getDaysOfArrears,
+  determineRBMClassification,
   getLoanDetails,
   getUserProfile,
   getLoanRepayments,
+    getExpectedAndPaidToDate,
   getLoanStatus,
   getTotalPayments,
   rbmReport,
@@ -61,7 +65,18 @@ const {
 } = require('./databaseHelpers');
 
 const app = express();
-const port = Number(process.env.REPORT_PORT || 4300);
+const port = Number(process.env.REPORT_PORT || 4500);
+
+// Allow dashboard page (port 80) to call the report service API (port 4500).
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', process.env.REPORT_CORS_ORIGIN || '*');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(204);
+    }
+    next();
+});
 
 // Database connection is now handled by databaseHelpers.js
 // Helper function to maintain callback compatibility
@@ -121,6 +136,42 @@ const updatePercentageToDB = (reportId) => {
     }
 };
 
+const normalizeTrackTransactionsFilterValue = (value) => {
+    if (typeof value !== 'string') {
+        return '';
+    }
+
+    return value.trim();
+};
+
+/** First non-empty filter value (PHP and Node historically used different JSON keys). */
+function firstNonEmpty(...candidates) {
+    for (const v of candidates) {
+        if (v === undefined || v === null) continue;
+        if (typeof v === 'string' && v.trim() === '') continue;
+        return v;
+    }
+    return undefined;
+}
+
+function normalizeDateInput(value) {
+    if (value === undefined || value === null) {
+        return '';
+    }
+
+    const raw = String(value).trim();
+    if (!raw) {
+        return '';
+    }
+
+    const parsed = moment(raw, ['YYYY-MM-DD', 'MM/DD/YYYY', 'DD/MM/YYYY', 'YYYY/MM/DD', 'MM-DD-YYYY', 'DD-MM-YYYY'], true);
+    if (parsed.isValid()) {
+        return parsed.format('YYYY-MM-DD');
+    }
+
+    const fallback = moment(raw);
+    return fallback.isValid() ? fallback.format('YYYY-MM-DD') : '';
+}
 
 app.post('/', async (req, res) => {
 	const report = {
@@ -131,6 +182,32 @@ app.post('/', async (req, res) => {
 	// Acknowledge the request with a "processing" response
 	res.status(202).json({message: 'Welcome something is working.',report:report});
 });
+// ── Portfolio Dashboard endpoints ──────────────────────────────────────────
+
+// GET  /portfolio-dashboard/data   → returns the latest snapshot JSON
+app.get('/portfolio-dashboard/data', async (req, res) => {
+    try {
+        const data = await getLatestPortfolioDashboard();
+        if (!data) {
+            return res.status(202).json({ message: 'No snapshot available yet. Please wait for the next hourly run.' });
+        }
+        res.json(data);
+    } catch (err) {
+        console.error('[Portfolio Dashboard] GET /data error:', err.message);
+        res.status(500).json({ error: 'Failed to retrieve portfolio dashboard data.' });
+    }
+});
+
+// POST /portfolio-dashboard/refresh  → trigger an immediate snapshot (admin use)
+app.post('/portfolio-dashboard/refresh', async (req, res) => {
+    res.status(202).json({ message: 'Portfolio dashboard snapshot triggered.' });
+    try {
+        await computeAndStorePortfolioDashboard();
+    } catch (err) {
+        console.error('[Portfolio Dashboard] Manual refresh error:', err.message);
+    }
+});
+
 // Add this to your existing import section in index.js
 
 
@@ -168,9 +245,11 @@ app.post('/generate-report-rbm-classification', async (req, res) => {
 
             // Extract filter parameters from request
             const filterOptions = {
-                branch: req.body.branch || 'All',
-                officer: req.body.officer || 'All',
-                product: req.body.product || 'All'
+                branch: firstNonEmpty(req.body.branch, req.body.branch_id) ?? 'All',
+                officer: firstNonEmpty(req.body.officer, req.body.officer_id, req.body.user) ?? 'All',
+                product: firstNonEmpty(req.body.product, req.body.productid, req.body.product_id) ?? 'All',
+                supervisor: firstNonEmpty(req.body.supervisor) ?? 'All',
+                supervisor_name: req.body.supervisor_name || ''
             };
 
             console.log(`Generating RBM Classification Report with options: ${JSON.stringify(filterOptions)}`);
@@ -286,13 +365,15 @@ app.post('/generate-report-transactions', async (req, res) => {
 
             // Extract filter parameters from request
             const filterOptions = {
-                branch: req.body.branch || null,
-                transaction_type: req.body.transaction_type_id || null,
-                loan: req.body.loan || null,
-                product: req.body.product || null,
-                officer: req.body.officer || null,
-                from: req.body.from || null,
-                to: req.body.to || null
+                branch: firstNonEmpty(req.body.branch) ?? null,
+                transaction_type: firstNonEmpty(req.body.transaction_type_id, req.body.transaction_type) ?? null,
+                loan: firstNonEmpty(req.body.loan, req.body.loan_number) ?? null,
+                product: firstNonEmpty(req.body.product, req.body.productid) ?? null,
+                officer: firstNonEmpty(req.body.officer, req.body.officer_id) ?? null,
+                supervisor: firstNonEmpty(req.body.supervisor) ?? 'All',
+                supervisor_name: req.body.supervisor_name || '',
+                from: normalizeDateInput(firstNonEmpty(req.body.from, req.body.date_from, req.body.from_date)) || null,
+                to: normalizeDateInput(firstNonEmpty(req.body.to, req.body.date_to, req.body.to_date)) || null
             };
 
             console.log(`Generating Payments Transactions Report with options: ${JSON.stringify(filterOptions)}`);
@@ -417,13 +498,15 @@ app.post('/generate-report-portfolio', async (req, res) => {
 
             // Extract filter parameters from request
             const filterOptions = {
-                user: req.body.officer || 'All',
-                branch: req.body.branch || 'All',
-                branchgp: req.body.branchgp || req.body.branch || 'All',
-                product: req.body.productid || 'All',
-                status: req.body.status || 'All',
-                from: req.body.date_from || '',
-                to: req.body.date_to || ''
+                user: firstNonEmpty(req.body.officer, req.body.user) ?? 'All',
+                branch: firstNonEmpty(req.body.branch) ?? 'All',
+                branchgp: firstNonEmpty(req.body.branchgp, req.body.branch) ?? 'All',
+                product: firstNonEmpty(req.body.productid, req.body.product) ?? 'All',
+                status: firstNonEmpty(req.body.status) ?? 'All',
+                supervisor: firstNonEmpty(req.body.supervisor) ?? 'All',
+                supervisor_name: req.body.supervisor_name || '',
+                from: normalizeDateInput(firstNonEmpty(req.body.date_from, req.body.from_date, req.body.from)),
+                to: normalizeDateInput(firstNonEmpty(req.body.date_to, req.body.to_date, req.body.to))
             };
 
             // Generate HTML content
@@ -546,13 +629,15 @@ app.post('/generate-report-portfolio-write-off', async (req, res) => {
 
             // Extract filter parameters from request
             const filterOptions = {
-                user: req.body.officer || 'All',
-                branch: req.body.branch || 'All',
-                branchgp: req.body.branchgp || req.body.branch || 'All',
-                product: req.body.productid || 'All',
-                status: req.body.status || 'All',
-                from: req.body.date_from || '',
-                to: req.body.date_to || ''
+                user: firstNonEmpty(req.body.officer, req.body.user) ?? 'All',
+                branch: firstNonEmpty(req.body.branch) ?? 'All',
+                branchgp: firstNonEmpty(req.body.branchgp, req.body.branch) ?? 'All',
+                product: firstNonEmpty(req.body.productid, req.body.product) ?? 'All',
+                status: firstNonEmpty(req.body.status) ?? 'All',
+                supervisor: firstNonEmpty(req.body.supervisor) ?? 'All',
+                supervisor_name: req.body.supervisor_name || '',
+                from: normalizeDateInput(firstNonEmpty(req.body.date_from, req.body.from_date, req.body.from)),
+                to: normalizeDateInput(firstNonEmpty(req.body.date_to, req.body.to_date, req.body.to))
             };
 
             // Generate HTML content
@@ -675,13 +760,15 @@ app.post('/generate-report-collections', async (req, res) => {
 
             // Extract filter parameters from request
             const filterOptions = {
-                user: req.body.officer || 'All',
+                user: firstNonEmpty(req.body.officer, req.body.user) ?? 'All',
                 officer_name: req.body.officer_name || 'All',
-                branch: req.body.branch || 'All',
+                branch: firstNonEmpty(req.body.branch) ?? 'All',
                 branch_name: req.body.branch_name || 'All',
+                supervisor: firstNonEmpty(req.body.supervisor) ?? 'All',
+                supervisor_name: req.body.supervisor_name || '',
                 period: req.body.period || '',
-                from: req.body.date_from || null,
-                to: req.body.date_to || null
+                from: normalizeDateInput(firstNonEmpty(req.body.date_from, req.body.from)) || null,
+                to: normalizeDateInput(firstNonEmpty(req.body.date_to, req.body.to)) || null
             };
 
             // Adjust dates based on period selection (existing code)...
@@ -845,10 +932,18 @@ app.post('/generate-report-upcoming-installment', async (req, res) => {
             };
 
             // Extract filter parameters from request
+            const officerCandidate = firstNonEmpty(req.body.officer);
+            const normalizedOfficer = (officerCandidate !== undefined && officerCandidate !== null && /^\d+$/.test(String(officerCandidate).trim()))
+                ? String(officerCandidate).trim()
+                : '';
             const filterOptions = {
-                user: req.body.officer || '',
-                branch: req.body.branch || '',
-                product: req.body.product || '',
+                user: normalizedOfficer,
+                branch: firstNonEmpty(req.body.branch) ?? '',
+                product: firstNonEmpty(req.body.product, req.body.productid) ?? '',
+                supervisor: firstNonEmpty(req.body.supervisor) ?? 'All',
+                supervisor_name: req.body.supervisor_name || '',
+                from: normalizeDateInput(firstNonEmpty(req.body.from, req.body.date_from, req.body.from_date)) || '',
+                to: normalizeDateInput(firstNonEmpty(req.body.to, req.body.date_to, req.body.to_date)) || '',
             };
 
             console.log(`Generating Upcoming Installment Report with options: ${JSON.stringify(filterOptions)}`);
@@ -1079,7 +1174,11 @@ app.post('/generate-report-par', async (req, res) => {
             };
 
             // Generate HTML content
-            const html = await generateHtml(result.insertId, req.body.officer, req.body.product);
+            const html = await generateHtml(
+                result.insertId,
+                firstNonEmpty(req.body.officer, req.body.loan_officer, req.body.user),
+                firstNonEmpty(req.body.product, req.body.productid, req.body.loan_product)
+            );
 
             // Use promisified writeFile
             await fs.promises.writeFile(filePath, html);
@@ -1245,6 +1344,7 @@ function exportData(type){
                         <th>Payment Terms  </th>
                         <th>Collateral Status  </th>
                         <th>Reserve Bank Classification </th>
+                        <th>RBM Loan Classification </th>
                         <th>Account Status </th>
                         <th>Account Status Change Date </th>
                         <th>Scheduled Repayment Amount </th>
@@ -1322,7 +1422,10 @@ function exportData(type){
                         let total_payments = await  loanCollection(record.loan_id);
                         let previousloan = await getPreviousLoan(record.loan_customer);
                         const totalPaymentsToDate = Number(total_payments?.[0]?.total || 0);
-                        let pay_balance = Math.max(Number(record.loan_amount_total || 0) - totalPaymentsToDate, 0);
+                        const dueAndPaid = await getExpectedAndPaidToDate(record.loan_id);
+                        const expectedToDate = Number(dueAndPaid.total_expected || 0);
+                        const paidToDateForOutstanding = Number(dueAndPaid.total_paid || 0);
+                        let pay_balance = Math.max(expectedToDate - paidToDateForOutstanding, 0);
                         let paymentslast= await getRBMLoanPaymentById(record.loan_id,record.loan_period);
                         let firstPayment = await getRBMLoanPaymentById(record.loan_id,1);
                         let lastPaidPayment = await getLastPaidPaymentByLoanId(record.loan_id);
@@ -1529,6 +1632,7 @@ table+=`
                         </td>
                         <td>SECURED</td>
                         <td> ${reserveBankClassification} </td>
+                        <td> ${determineRBMClassification(days_in_arrears)} </td>
                         <td>${accountStatus}</td>
                                 <td> ${accountStatusChangeDate}</td>
                                 <td> ${formatCurrency(record.loan_amount_term)}</td>
@@ -2279,15 +2383,17 @@ app.post('/generate-report-par-v2', async (req, res) => {
                 dbPath: dbPath
             };
 
-            // Get filters from request body
-            const officer = req.body.officer;
-            const product = req.body.product;
-            const branch = req.body.branch;
-            const dateFrom = req.body.date_from;
-            const dateTo = req.body.date_to;
+            // Get filters from request body (accept alternate keys from PHP/clients)
+            const officer = firstNonEmpty(req.body.officer, req.body.loan_officer);
+            const product = firstNonEmpty(req.body.product, req.body.productid, req.body.loan_product);
+            const branch = firstNonEmpty(req.body.branch);
+            const supervisor = firstNonEmpty(req.body.supervisor) ?? 'All';
+            const dateFrom = normalizeDateInput(firstNonEmpty(req.body.date_from, req.body.from_date, req.body.from)) || null;
+            const dateTo = normalizeDateInput(firstNonEmpty(req.body.date_to, req.body.to_date, req.body.to)) || null;
 
             console.log(`Generating Detailed Portfolio Report with filters:`, {
                 officer: officer || 'All',
+                supervisor: supervisor || 'All',
                 product: product || 'All',
                 branch: branch || 'All',
                 dateFrom: dateFrom || 'No start date',
@@ -2295,7 +2401,7 @@ app.post('/generate-report-par-v2', async (req, res) => {
             });
 
             // Generate HTML content using the enhanced version
-            await generatePARReportV2Enhanced(reportId, officer, product, branch, dateFrom, dateTo, db, reportTrackers);
+            await generatePARReportV2Enhanced(reportId, officer, product, branch, dateFrom, dateTo, supervisor, db, reportTrackers);
 
             // Clear the interval to stop updates
             if (reportTrackers[reportId] && reportTrackers[reportId].intervalId) {
@@ -2393,13 +2499,15 @@ app.post('/generate-report-par-detailed-portfolio', async (req, res) => {
 
             // Extract all possible filter parameters
             const filterOptions = {
-                officer: req.body.officer || req.body.loan_officer,
-                product: req.body.product || req.body.loan_product,
-                branch: req.body.branch,
-                dateFrom: req.body.date_from || req.body.from_date,
-                dateTo: req.body.date_to || req.body.to_date,
-                status: req.body.status || 'ACTIVE',
-                customer_type: req.body.customer_type
+                officer: firstNonEmpty(req.body.officer, req.body.loan_officer),
+                product: firstNonEmpty(req.body.product, req.body.productid, req.body.loan_product),
+                branch: firstNonEmpty(req.body.branch),
+                dateFrom: normalizeDateInput(firstNonEmpty(req.body.date_from, req.body.from_date, req.body.from)) || null,
+                dateTo: normalizeDateInput(firstNonEmpty(req.body.date_to, req.body.to_date, req.body.to)) || null,
+                status: firstNonEmpty(req.body.status) ?? 'ACTIVE',
+                customer_type: req.body.customer_type,
+                supervisor: firstNonEmpty(req.body.supervisor) ?? 'All',
+                supervisor_name: req.body.supervisor_name || ''
             };
 
             console.log(`Generating PAR Detailed Portfolio Report with comprehensive filters:`, filterOptions);
@@ -2412,6 +2520,7 @@ app.post('/generate-report-par-detailed-portfolio', async (req, res) => {
                 filterOptions.branch,
                 filterOptions.dateFrom,
                 filterOptions.dateTo,
+                filterOptions.supervisor,
                 db,
                 reportTrackers
             );
@@ -2623,11 +2732,13 @@ app.post('/generate-report-par-principal-balance', async (req, res) => {
 
             // Extract filter parameters
             const filterOptions = {
-                officer: req.body.officer || req.body.loan_officer,
-                product: req.body.product || req.body.loan_product,
-                branch: req.body.branch,
-                dateFrom: req.body.date_from || req.body.from_date,
-                dateTo: req.body.date_to || req.body.to_date
+                officer: firstNonEmpty(req.body.officer, req.body.loan_officer),
+                product: firstNonEmpty(req.body.product, req.body.productid, req.body.loan_product),
+                branch: firstNonEmpty(req.body.branch),
+                dateFrom: normalizeDateInput(firstNonEmpty(req.body.date_from, req.body.from_date, req.body.from)) || null,
+                dateTo: normalizeDateInput(firstNonEmpty(req.body.date_to, req.body.to_date, req.body.to)) || null,
+                supervisor: firstNonEmpty(req.body.supervisor) ?? 'All',
+                supervisor_name: req.body.supervisor_name || ''
             };
 
             console.log(`Generating Principal Balance PAR Report with filters:`, filterOptions);
@@ -2640,6 +2751,7 @@ app.post('/generate-report-par-principal-balance', async (req, res) => {
                 filterOptions.branch,
                 filterOptions.dateFrom,
                 filterOptions.dateTo,
+                filterOptions.supervisor,
                 db,
                 reportTrackers
             );
@@ -2721,12 +2833,14 @@ app.post('/generate-report-arrears', async (req, res) => {
 
             // Extract filter parameters from request
             const filterOptions = {
-                start_date: req.body.start_date || null,
-                end_date: req.body.end_date || null,
-                officer_id: req.body.officer_id || null,
+                start_date: normalizeDateInput(firstNonEmpty(req.body.start_date, req.body.date_from, req.body.from)) || null,
+                end_date: normalizeDateInput(firstNonEmpty(req.body.end_date, req.body.date_to, req.body.to)) || null,
+                officer_id: firstNonEmpty(req.body.officer_id, req.body.officer) ?? null,
                 officer_name: req.body.officer_name || 'All Officers',
-                branch_id: req.body.branch_id || null,
-                branch_name: req.body.branch_name || 'All Branches'
+                branch_id: firstNonEmpty(req.body.branch_id, req.body.branch) ?? null,
+                branch_name: req.body.branch_name || 'All Branches',
+                supervisor: firstNonEmpty(req.body.supervisor) ?? 'All',
+                supervisor_name: req.body.supervisor_name || ''
             };
 
             console.log(`Generating Arrears Report with options: ${JSON.stringify(filterOptions)}`);
@@ -2834,8 +2948,10 @@ app.post('/generate-report-loan-deposits', async (req, res) => {
             };
 
             const filterOptions = {
-                from: req.body.from || null,
-                to: req.body.to || null
+                from: normalizeDateInput(firstNonEmpty(req.body.from, req.body.date_from, req.body.from_date)) || null,
+                to: normalizeDateInput(firstNonEmpty(req.body.to, req.body.date_to, req.body.to_date)) || null,
+                supervisor: firstNonEmpty(req.body.supervisor) ?? 'All',
+                supervisor_name: req.body.supervisor_name || ''
             };
 
             console.log(`Generating Loan Deposits Report with options: ${JSON.stringify(filterOptions)}`);
@@ -2911,6 +3027,116 @@ app.post('/generate-report-loan-deposits', async (req, res) => {
     });
 });
 
+app.post('/generate-report-track-transactions', async (req, res) => {
+    res.status(202).json({ message: 'Tracked Transactions Report generation is processing...' });
+
+    const report = {
+        report_type: 'TRACK_TRANSACTIONS',
+        user: req.body.user,
+        user_id: req.body.user_id,
+        status: 'in progress',
+    };
+
+    db.query('INSERT INTO reports SET ?', report, async (err, result) => {
+        if (err) {
+            console.error('Failed to insert tracked transactions report: ', err);
+            return;
+        }
+
+        try {
+            const currentDate = moment().format('YYYYMMDD_HHmmss');
+            const paths = getReportPaths('report_track_transactions', currentDate);
+
+            reportTrackers[result.insertId] = {
+                percentage: 0,
+                intervalId: setInterval(() => updatePercentageToDB(result.insertId), 15000),
+            };
+
+            const filterOptions = {
+                from: normalizeTrackTransactionsFilterValue(normalizeDateInput(firstNonEmpty(req.body.from, req.body.date_from, req.body.start_date))),
+                to: normalizeTrackTransactionsFilterValue(normalizeDateInput(firstNonEmpty(req.body.to, req.body.date_to, req.body.end_date))),
+                customer_name: normalizeTrackTransactionsFilterValue(firstNonEmpty(req.body.customer_name, req.body.customer, req.body.client_name)),
+                loan_number: normalizeTrackTransactionsFilterValue(firstNonEmpty(req.body.loan_number, req.body.loan, req.body.loan_no)),
+                transaction_type: normalizeTrackTransactionsFilterValue(firstNonEmpty(req.body.transaction_type, req.body.transaction_type_id, req.body.type)),
+                supervisor: firstNonEmpty(req.body.supervisor) ?? 'All',
+                supervisor_name: req.body.supervisor_name || ''
+            };
+
+            const html = await generateTrackTransactionsReport(
+                filterOptions,
+                result.insertId,
+                reportTrackers,
+                db
+            );
+
+            fs.writeFile(paths.filePath, html, async (writeErr) => {
+                if (writeErr) {
+                    console.error('Failed to write tracked transactions report: ', writeErr);
+
+                    const updateReport = {
+                        status: 'failed',
+                        error_message: writeErr.message,
+                        completed_time: new Date(),
+                    };
+
+                    db.query('UPDATE reports SET ? WHERE id = ?', [updateReport, result.insertId]);
+
+                    if (reportTrackers[result.insertId] && reportTrackers[result.insertId].intervalId) {
+                        clearInterval(reportTrackers[result.insertId].intervalId);
+                        delete reportTrackers[result.insertId];
+                    }
+
+                    return;
+                }
+
+                const updateReport = {
+                    status: 'completed',
+                    percentage: 100,
+                    download_link: paths.dbPath,
+                    completed_time: new Date(),
+                };
+
+                db.query('UPDATE reports SET ? WHERE id = ?', [updateReport, result.insertId], (updateErr) => {
+                    if (updateErr) {
+                        console.error('Failed to update tracked transactions report status: ', updateErr);
+                    }
+
+                    if (reportTrackers[result.insertId] && reportTrackers[result.insertId].intervalId) {
+                        clearInterval(reportTrackers[result.insertId].intervalId);
+                        delete reportTrackers[result.insertId];
+                    }
+                });
+            });
+        } catch (generationError) {
+            console.error('Tracked transactions report generation failed: ', generationError);
+
+            const updateReport = {
+                status: 'failed',
+                error_message: generationError.message,
+                completed_time: new Date(),
+            };
+
+            db.query('UPDATE reports SET ? WHERE id = ?', [updateReport, result.insertId], () => {
+                if (reportTrackers[result.insertId] && reportTrackers[result.insertId].intervalId) {
+                    clearInterval(reportTrackers[result.insertId].intervalId);
+                    delete reportTrackers[result.insertId];
+                }
+            });
+        }
+    });
+});
+
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
+
+  // ── Portfolio Dashboard: run immediately on startup, then every hour ──
+  async function runPortfolioDashboard() {
+      try {
+          await computeAndStorePortfolioDashboard();
+      } catch (err) {
+          console.error('[Portfolio Dashboard] Snapshot failed:', err.message);
+      }
+  }
+  runPortfolioDashboard();
+  setInterval(runPortfolioDashboard, 60 * 60 * 1000); // every 60 minutes
 });

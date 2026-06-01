@@ -44,9 +44,30 @@ class Transactions_model extends CI_Model
     }
     function search2($id)
     {
-        $r = get_by_id('loan','loan_id', $id);
-        $this->db->order_by('system_time', $this->order);
+        return $this->search2_filtered($id);
+    }
+
+    /**
+     * Account statement rows (transaction ledger) for a loan account.
+     */
+    function search2_filtered($loan_id, $from = null, $to = null)
+    {
+        $r = get_by_id('loan', 'loan_id', $loan_id);
+        if (!$r || empty($r->loan_number)) {
+            return array();
+        }
+
+        $this->db->order_by('transaction.system_time', $this->order);
         $this->db->where('transaction.account_number', $r->loan_number);
+
+        $from = trim((string) $from);
+        $to = trim((string) $to);
+        if ($from !== '') {
+            $this->db->where('DATE(transaction.system_time) >=', date('Y-m-d', strtotime($from)));
+        }
+        if ($to !== '') {
+            $this->db->where('DATE(transaction.system_time) <=', date('Y-m-d', strtotime($to)));
+        }
 
         return $this->db->get('transaction')->result();
     }
@@ -197,6 +218,116 @@ class Transactions_model extends CI_Model
         }
 
         return null;
+    }
+
+    public function get_tracked_transactions($filters = array())
+    {
+        $fields = $this->get_table_fields();
+        $reference_column = in_array('payment_reference', $fields) ? 'payment_reference' : (in_array('reference', $fields) ? 'reference' : '');
+        $payment_type_column = in_array('payment_type', $fields) ? 'payment_type' : (in_array('method', $fields) ? 'method' : '');
+
+        if ($reference_column !== '') {
+            $payment_reference_select = "CASE
+                WHEN transactions." . $reference_column . " IS NOT NULL AND TRIM(transactions." . $reference_column . ") <> '' THEN transactions." . $reference_column . "
+                ELSE ''
+            END AS payment_reference_value";
+        } else {
+            $payment_reference_select = '"" AS payment_reference_value';
+        }
+
+        if ($payment_type_column === 'method') {
+            $payment_type_select = "CASE
+                WHEN transactions.method = 1 THEN 'Bank'
+                WHEN transactions.method = 0 THEN ''
+                WHEN transactions.method IS NULL THEN ''
+                ELSE ''
+            END AS payment_type_value";
+        } elseif ($payment_type_column !== '') {
+            $payment_type_select = "CASE
+                WHEN transactions." . $payment_type_column . " IS NULL THEN ''
+                WHEN TRIM(transactions." . $payment_type_column . ") = '' THEN ''
+                ELSE CONCAT(UCASE(LEFT(TRIM(transactions." . $payment_type_column . "), 1)), LCASE(SUBSTRING(TRIM(transactions." . $payment_type_column . "), 2)))
+            END AS payment_type_value";
+        } else {
+            $payment_type_select = '"" AS payment_type_value';
+        }
+
+        $this->db->select("transactions.transaction_id,
+            transactions.transaction_type,
+            transactions.ref,
+            transactions.loan_id,
+            transactions.amount,
+            transactions.payment_number,
+            CASE
+                WHEN transactions.date_stamp IS NULL OR transactions.date_stamp = '0000-00-00 00:00:00' OR transactions.date_stamp = '0000-00-00' THEN NULL
+                ELSE transactions.date_stamp
+            END AS display_date_stamp,
+            IFNULL(transaction_type.name, CONCAT('Type ', transactions.transaction_type)) AS transaction_type_name,
+            " . $payment_reference_select . ",
+            " . $payment_type_select . ",
+            COALESCE(
+                loan.loan_number,
+                (
+                    SELECT l2.loan_number
+                    FROM loan l2
+                    WHERE l2.loan_customer = transactions.loan_id OR l2.group_id = transactions.loan_id
+                    ORDER BY l2.loan_id DESC
+                    LIMIT 1
+                ),
+                CAST(transactions.loan_id AS CHAR)
+            ) AS loan_number,
+            CASE
+                WHEN groups.group_id IS NOT NULL THEN CONCAT(groups.group_name, ' (', groups.group_code, ')')
+                WHEN individual_customers.id IS NOT NULL THEN CONCAT(individual_customers.Firstname, ' ', individual_customers.Lastname)
+                WHEN legacy_individual_customers.id IS NOT NULL THEN CONCAT(legacy_individual_customers.Firstname, ' ', legacy_individual_customers.Lastname)
+                WHEN legacy_groups.group_id IS NOT NULL THEN CONCAT(legacy_groups.group_name, ' (', legacy_groups.group_code, ')')
+                ELSE ''
+            END AS customer_name,
+            CONCAT_WS(' ', employees.Firstname, employees.Lastname) AS added_by_name");
+        $this->db->from($this->table);
+        $this->db->join('loan', 'loan.loan_id = transactions.loan_id', 'left');
+        $this->db->join('transaction_type', 'transaction_type.transaction_type_id = transactions.transaction_type', 'left');
+        $this->db->join('groups', 'groups.group_id = loan.group_id', 'left');
+        $this->db->join('individual_customers', 'individual_customers.id = loan.loan_customer', 'left');
+        $this->db->join('groups legacy_groups', 'legacy_groups.group_id = transactions.loan_id', 'left');
+        $this->db->join('individual_customers legacy_individual_customers', 'legacy_individual_customers.id = transactions.loan_id', 'left');
+        $this->db->join('employees', 'employees.id = transactions.added_by', 'left');
+
+        if (!empty($filters['from'])) {
+            $this->db->where('DATE(transactions.date_stamp) >=', date('Y-m-d', strtotime($filters['from'])));
+        }
+
+        if (!empty($filters['to'])) {
+            $this->db->where('DATE(transactions.date_stamp) <=', date('Y-m-d', strtotime($filters['to'])));
+        }
+
+        if (!empty($filters['loan_number'])) {
+            $this->db->like('loan.loan_number', trim($filters['loan_number']));
+        }
+
+        if (!empty($filters['transaction_type'])) {
+            $this->db->where('transactions.transaction_type', $filters['transaction_type']);
+        }
+
+        if (!empty($filters['customer_name'])) {
+            $customer_name = trim($filters['customer_name']);
+            $this->db->group_start();
+            $this->db->like('groups.group_name', $customer_name);
+            $this->db->or_like('groups.group_code', $customer_name);
+            $this->db->or_like('individual_customers.Firstname', $customer_name);
+            $this->db->or_like('individual_customers.Lastname', $customer_name);
+            $this->db->or_like('legacy_groups.group_name', $customer_name);
+            $this->db->or_like('legacy_groups.group_code', $customer_name);
+            $this->db->or_like('legacy_individual_customers.Firstname', $customer_name);
+            $this->db->or_like('legacy_individual_customers.Lastname', $customer_name);
+            $this->db->or_like("CONCAT(individual_customers.Firstname, ' ', individual_customers.Lastname)", $customer_name, 'both', false);
+            $this->db->or_like("CONCAT(legacy_individual_customers.Firstname, ' ', legacy_individual_customers.Lastname)", $customer_name, 'both', false);
+            $this->db->group_end();
+        }
+
+        $this->db->order_by('transactions.date_stamp', 'DESC');
+
+        return $this->db->get()->result();
     }
 
     private function get_table_fields()

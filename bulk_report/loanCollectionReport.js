@@ -1,6 +1,13 @@
 const moment = require('moment');
 const fs = require('fs');
 const path = require('path');
+const {
+    determineRBMClassification,
+    sqlLoanMaxDaysInArrearsExpr,
+    getOfficerIdsUnderSupervisor,
+    sqlRelationshipSupervisorNameExpr,
+    sqlBranchJoin
+} = require('./databaseHelpers');
 
 /**
  * Generate a Loan Collections Report HTML
@@ -24,6 +31,7 @@ async function generateLoanCollectionsReport(filterOptions, reportId, reportTrac
         const result = await getCollectionsData(
             filterOptions.branch || 'All',
             filterOptions.user || 'All',
+            filterOptions.supervisor,
             filterOptions.from, // This can be null now
             filterOptions.to,   // This can be null now
             reportId,
@@ -65,63 +73,121 @@ async function generateLoanCollectionsReport(filterOptions, reportId, reportTrac
  * @param {Object} db - Database connection
  * @returns {Promise<Object>} - Collection data with filter names
  */
-async function getCollectionsData(branch, loanOfficer, fromDate, toDate, reportId, reportTrackers, db) {
+async function getCollectionsData(branch, loanOfficer, supervisor, fromDate, toDate, reportId, reportTrackers, db) {
+    if (!db) {
+        throw new Error('Database connection is not available');
+    }
+
+    reportTrackers[reportId].percentage = 10;
+    console.log('Fetching loan collections data...');
+
+    let whereConditions = [];
+    let params = [];
+
+    whereConditions.push("l.loan_status IN ('ACTIVE','APPROVED')");
+    whereConditions.push("l.disbursed = 'Yes'");
+
+    if (branch !== 'All') {
+        whereConditions.push(`(
+            l.branch = ?
+            OR l.branch IN (SELECT Code FROM branches WHERE id = ?)
+            OR l.branch IN (SELECT BranchCode FROM branches WHERE id = ?)
+        )`);
+        params.push(branch, branch, branch);
+    }
+
+    if (supervisor && supervisor !== 'All') {
+        const officerIds = await getOfficerIdsUnderSupervisor(supervisor);
+        if (!officerIds.length) {
+            whereConditions.push('1=0');
+        } else {
+            whereConditions.push(`l.loan_added_by IN (${officerIds.join(',')})`);
+        }
+    } else if (loanOfficer !== 'All') {
+        whereConditions.push('l.loan_added_by = ?');
+        params.push(loanOfficer);
+    }
+
     return new Promise((resolve, reject) => {
-        if (!db) {
-            return reject(new Error('Database connection is not available'));
-        }
-
-        // Update progress
-        reportTrackers[reportId].percentage = 10;
-        console.log('Fetching loan collections data...');
-
-        // Build where conditions for the query
-        let whereConditions = [];
-        let params = [];
-
-        // Basic condition for active loans
-        whereConditions.push('l.loan_status = ?');
-        params.push('ACTIVE');
-
-        // Apply branch filter if not 'All'
-        if (branch !== 'All') {
-            whereConditions.push('l.branch = ?');
-            params.push(branch);
-        }
-
-        // Apply loan officer filter if not 'All'
-        if (loanOfficer !== 'All') {
-            whereConditions.push('l.loan_added_by = ?');
-            params.push(loanOfficer);
-        }
 
         // Combine conditions
         const whereClause = whereConditions.length > 0
             ? 'WHERE ' + whereConditions.join(' AND ')
             : '';
 
-        // Query to get loans with their payment schedules
+        const dateFilterEnabled = fromDate !== null && toDate !== null;
+
+        // Query to get loans with aggregated schedule metrics in one pass.
         const query = `
             SELECT l.loan_id, l.loan_number, l.loan_customer, l.customer_type,
                    l.loan_principal, l.loan_amount_total, l.loan_added_date,
                    l.loan_status, l.loan_added_by,
                    employees.Firstname as loan_officer_firstname,
                    employees.Lastname as loan_officer_lastname,
+                   ${sqlRelationshipSupervisorNameExpr('rel_sup')} as relationship_supervisor,
                    b.BranchName as branch_name,
                    b.Code as branch_code,
                    CASE
-                       WHEN l.customer_type = 'group' THEN g.group_name
+                       WHEN l.customer_type = 'group' THEN CONCAT(g.group_name, ' (', g.group_code, ')')
                        ELSE 'N/A'
-                   END AS customer_group_name
+                   END AS customer_group_name,
+                   CASE
+                       WHEN l.customer_type = 'group' THEN CONCAT(g.group_name, ' (', g.group_code, ')')
+                       WHEN l.customer_type = 'individual' THEN CONCAT(ic.Firstname, ' ', ic.Lastname, ' (', COALESCE(ic.ClientId, 'No ID'), ')')
+                       ELSE 'Unknown Customer'
+                   END AS customer_name,
+                   COALESCE(ps.total_expected, 0) as total_expected,
+                   COALESCE(ps.total_collected, 0) as total_collected,
+                   ps.next_repayment_date,
+                   ${sqlLoanMaxDaysInArrearsExpr('l')} as days_in_arrears
             FROM loan l
                      LEFT JOIN employees ON employees.id = l.loan_added_by
-                     LEFT JOIN branches b ON b.id = l.branch
+                     LEFT JOIN employees rel_sup ON rel_sup.id = employees.Supervisor
+                     ${sqlBranchJoin('l', 'b')}
+                     LEFT JOIN individual_customers ic ON ic.id = l.loan_customer AND l.customer_type = 'individual'
                      LEFT JOIN \`groups\` g ON l.loan_customer = g.group_id AND l.customer_type = 'group'
+                     LEFT JOIN (
+                        SELECT
+                            loan_id,
+                            SUM(CASE
+                                WHEN ? = 0 THEN COALESCE(amount, 0)
+                                WHEN ? = 1 AND DATE(payment_schedule) BETWEEN DATE(?) AND DATE(?) THEN COALESCE(amount, 0)
+                                WHEN ? = 1 AND DATE(payment_schedule) < DATE(?)
+                                     AND COALESCE(amount, 0) > COALESCE(paid_amount, 0)
+                                     THEN (COALESCE(amount, 0) - COALESCE(paid_amount, 0))
+                                ELSE 0 END) AS total_expected,
+                            SUM(CASE
+                                WHEN ? = 1 AND DATE(payment_schedule) BETWEEN DATE(?) AND DATE(?) THEN COALESCE(paid_amount, 0)
+                                WHEN ? = 0 THEN COALESCE(paid_amount, 0)
+                                ELSE 0 END) AS total_collected,
+                            MIN(CASE WHEN COALESCE(amount, 0) > COALESCE(paid_amount, 0) THEN payment_schedule END) AS next_repayment_date
+                        FROM payement_schedules
+                        GROUP BY loan_id
+                     ) ps ON ps.loan_id = l.loan_id
                 ${whereClause}
         `;
 
         // Execute the query
-        db.query(query, params, async (err, loans) => {
+        const df = dateFilterEnabled ? 1 : 0;
+        const rangeStart = fromDate || '1900-01-01';
+        const rangeEnd = toDate || '2999-12-31';
+        const queryParams = [
+            // Parameters for payement_schedules aggregate subquery placeholders.
+            df,
+            df,
+            rangeStart,
+            rangeEnd,
+            df,
+            rangeStart,
+            df,
+            rangeStart,
+            rangeEnd,
+            df,
+            // WHERE-clause filters are appended last because they appear last in SQL.
+            ...(params || [])
+        ];
+
+        db.query(query, queryParams, async (err, loans) => {
             if (err) {
                 console.error('Error fetching loans:', err);
                 return reject(err);
@@ -141,7 +207,7 @@ async function getCollectionsData(branch, loanOfficer, fromDate, toDate, reportI
             if (branch !== 'All') {
                 try {
                     const branchResult = await new Promise((resolve, reject) => {
-                        db.query('SELECT BranchName FROM branches WHERE Code = ?', [branch], (err, result) => {
+                        db.query('SELECT BranchName FROM branches WHERE id = ? OR Code = ? LIMIT 1', [branch, branch], (err, result) => {
                             if (err) return reject(err);
                             resolve(result);
                         });
@@ -183,33 +249,18 @@ async function getCollectionsData(branch, loanOfficer, fromDate, toDate, reportI
                 console.log(`Processing loan ${processedCount}/${totalCount} (${processedPercentage}%)`);
 
                 try {
-                    // Get customer details
-                    let customerName = await getCustomerName(db, loan.loan_customer, loan.customer_type);
-
-                    // Create collection data object
                     const collectionData = {
                         loan_id: loan.loan_id,
                         loan_number: loan.loan_number,
-                        customer_name: customerName,
+                        customer_name: loan.customer_name || 'Unknown Customer',
                         customer_group_name: loan.customer_group_name || 'N/A',
                         amount_disbursed: loan.loan_principal,
                         branch_name: loan.branch_name || 'N/A',
-                        loan_officer: `${loan.loan_officer_firstname || ''} ${loan.loan_officer_lastname || ''}`.trim() || 'N/A'
+                        loan_officer: `${loan.loan_officer_firstname || ''} ${loan.loan_officer_lastname || ''}`.trim() || 'N/A',
+                        relationship_supervisor: loan.relationship_supervisor || 'N/A',
+                        expected_collection: parseFloat(loan.total_expected) || 0,
+                        amount_collected: parseFloat(loan.total_collected) || 0
                     };
-
-                    // Get payment schedules - handle null dates differently
-                    let paymentTotals;
-
-                    if (fromDate === null || toDate === null) {
-                        // No date filtering - get all payment schedules for this loan
-                        paymentTotals = await getAllPaymentTotals(db, loan.loan_id);
-                    } else {
-                        // Apply date filtering
-                        paymentTotals = await getPaymentTotalsWithDateFilter(db, loan.loan_id, fromDate, toDate);
-                    }
-
-                    collectionData.expected_collection = paymentTotals.total_expected || 0;
-                    collectionData.amount_collected = paymentTotals.total_collected || 0;
 
                     // Calculate collection rate
                     if (collectionData.expected_collection > 0) {
@@ -218,9 +269,9 @@ async function getCollectionsData(branch, loanOfficer, fromDate, toDate, reportI
                         collectionData.collection_rate = 0;
                     }
 
-                    // Get next repayment date
-                    const nextPayment = await getNextPayment(db, loan.loan_id);
-                    collectionData.repayment_date = nextPayment ? nextPayment.payment_schedule : 'N/A';
+                    collectionData.repayment_date = loan.next_repayment_date || 'N/A';
+                    collectionData.days_in_arrears = parseInt(loan.days_in_arrears || 0, 10);
+                    collectionData.rbm_classification = determineRBMClassification(collectionData.days_in_arrears);
 
                     collections.push(collectionData);
                 } catch (error) {
@@ -247,117 +298,6 @@ async function getCollectionsData(branch, loanOfficer, fromDate, toDate, reportI
                 dateFilterStatus
             });
         });
-    });
-}
-
-/**
- * Get all payment totals for a loan up to current date (no date range filtering)
- *
- * @param {Object} db - Database connection
- * @param {number} loanId - Loan ID
- * @returns {Promise<Object>} - Payment totals
- */
-async function getAllPaymentTotals(db, loanId) {
-    return new Promise((resolve, reject) => {
-        // Use current date as the cut-off for expected collections
-        const currentDate = moment().format('YYYY-MM-DD');
-
-        db.query(
-            `SELECT
-                 SUM(CASE WHEN payment_schedule <= ? THEN amount ELSE 0 END) as total_expected,
-                 SUM(paid_amount) as total_collected
-             FROM payement_schedules
-             WHERE loan_id = ?`,
-            [currentDate, loanId],
-            (err, results) => {
-                if (err) return reject(err);
-                resolve(results[0] || { total_expected: 0, total_collected: 0 });
-            }
-        );
-    });
-}
-
-/**
- * Get payment totals within date range
- *
- * @param {Object} db - Database connection
- * @param {number} loanId - Loan ID
- * @param {string} fromDate - Start date
- * @param {string} toDate - End date
- * @returns {Promise<Object>} - Payment totals
- */
-async function getPaymentTotalsWithDateFilter(db, loanId, fromDate, toDate) {
-    return new Promise((resolve, reject) => {
-        db.query(
-            `SELECT
-                 SUM(CASE WHEN payment_schedule BETWEEN ? AND ? THEN amount ELSE 0 END) as total_expected,
-                 SUM(CASE WHEN payment_schedule BETWEEN ? AND ? THEN paid_amount ELSE 0 END) as total_collected
-             FROM payement_schedules
-             WHERE loan_id = ?`,
-            [fromDate, toDate, fromDate, toDate, loanId],
-            (err, results) => {
-                if (err) return reject(err);
-                resolve(results[0] || { total_expected: 0, total_collected: 0 });
-            }
-        );
-    });
-}
-
-/**
- * Get customer name based on customer type and ID
- *
- * @param {Object} db - Database connection
- * @param {number} customerId - Customer ID
- * @param {string} customerType - Customer type ('group' or 'individual')
- * @returns {Promise<string>} - Customer name
- */
-async function getCustomerName(db, customerId, customerType) {
-    return new Promise((resolve, reject) => {
-        if (customerType === 'group') {
-            db.query(
-                'SELECT group_name, group_code FROM `groups` WHERE group_id = ?',
-                [customerId],
-                (err, results) => {
-                    if (err) return reject(err);
-                    if (results.length === 0) return resolve('Unknown Group');
-                    resolve(`${results[0].group_name} (${results[0].group_code})`);
-                }
-            );
-        } else {
-            db.query(
-                'SELECT Firstname, Lastname, ClientId FROM individual_customers WHERE id = ?',
-                [customerId],
-                (err, results) => {
-                    if (err) return reject(err);
-                    if (results.length === 0) return resolve('Unknown Customer');
-                    resolve(`${results[0].Firstname} ${results[0].Lastname} (${results[0].ClientId || 'No ID'})`);
-                }
-            );
-        }
-    });
-}
-
-/**
- * Get next payment date
- *
- * @param {Object} db - Database connection
- * @param {number} loanId - Loan ID
- * @returns {Promise<Object>} - Next payment
- */
-async function getNextPayment(db, loanId) {
-    return new Promise((resolve, reject) => {
-        db.query(
-            `SELECT payment_schedule
-             FROM payement_schedules
-             WHERE loan_id = ? AND amount > paid_amount
-             ORDER BY payment_schedule ASC
-                 LIMIT 1`,
-            [loanId],
-            (err, results) => {
-                if (err) return reject(err);
-                resolve(results[0] || null);
-            }
-        );
     });
 }
 
@@ -406,7 +346,9 @@ function generateHtml(collections, filterOptions) {
             <td>${formatCurrency(collection.amount_collected)}</td>
             <td>${formatNumber(collection.collection_rate)}%</td>
             <td>${formatDate(collection.repayment_date)}</td>
+            <td>${collection.rbm_classification || 'Standard'}</td>
             <td>${collection.loan_officer}</td>
+            <td>${collection.relationship_supervisor || 'N/A'}</td>
         </tr>`;
     });
 
@@ -568,27 +510,27 @@ function generateHtml(collections, filterOptions) {
                     <thead>
                         <!-- Filter information rows (included in export) -->
                         <tr class="filter-header">
-                            <td colspan="11">Loan Collections Report - Filter Information</td>
+                            <td colspan="13">Loan Collections Report - Filter Information</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="2">Branch:</td>
-                            <td colspan="9">${filterOptions.branch_name || 'All Branches'}</td>
+                            <td colspan="11">${filterOptions.branch_name || 'All Branches'}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="2">Loan Officer:</td>
-                            <td colspan="9">${filterOptions.officer_name || 'All Officers'}</td>
+                            <td colspan="11">${filterOptions.officer_name || 'All Officers'}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="2">Date Range:</td>
-                            <td colspan="9">${dateFilterText}</td>
+                            <td colspan="11">${dateFilterText}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="2">Report Date:</td>
-                            <td colspan="9">${moment().format('YYYY-MM-DD HH:mm:ss')}</td>
+                            <td colspan="11">${moment().format('YYYY-MM-DD HH:mm:ss')}</td>
                         </tr>
                         <!-- Empty row for spacing -->
                         <tr>
-                            <td colspan="11">&nbsp;</td>
+                            <td colspan="13">&nbsp;</td>
                         </tr>
                         <!-- Data header row -->
                         <tr>
@@ -602,7 +544,9 @@ function generateHtml(collections, filterOptions) {
                             <th>Amount Collected (MWK)</th>
                             <th>Collections Rate (%)</th>
                             <th>Next Repayment Date</th>
-                            <th>Officer</th>
+                            <th>RBM Loan Classification</th>
+                            <th>Loan Officer</th>
+                            <th>Relationship Supervisor</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -615,7 +559,7 @@ function generateHtml(collections, filterOptions) {
                             <td>${formatCurrency(totalExpected)}</td>
                             <td>${formatCurrency(totalCollected)}</td>
                             <td>${formatNumber(overallCollectionRate)}%</td>
-                            <td colspan="2"></td>
+                            <td colspan="4"></td>
                         </tr>
                     </tfoot>
                 </table>

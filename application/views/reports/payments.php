@@ -58,12 +58,15 @@ $branches= get_all('branches');
 
                             <div class="col-md-3 mb-3">
                                 <label>Loan Officer:</label>
-                                <select name="officer" class="form-control select2">
+                                <select name="officer" id="report-filter-officer" class="form-control select2">
                                     <option value="">All Officers</option>
                                     <?php foreach ($employees as $employee): ?>
                                         <option value="<?php echo $employee->id; ?>"><?php echo $employee->Firstname . " " . $employee->Lastname; ?></option>
                                     <?php endforeach; ?>
                                 </select>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <?php $this->load->view('reports/_relationship_supervisor_filter'); ?>
                             </div>
                         </div>
 
