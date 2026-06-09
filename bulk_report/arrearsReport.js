@@ -46,7 +46,10 @@ async function generateArrearsReport(filterOptions, reportId, reportTrackers, db
                     ${sqlRelationshipSupervisorNameExpr('rel_sup')} as relationship_supervisor,
                     SUM(CASE
                         WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < DATE(?)
-                            THEN (COALESCE(ps.interest, 0) + COALESCE(ps.padmin_fee, 0) + COALESCE(ps.ploan_cover, 0))
+                            THEN GREATEST(
+                                (COALESCE(ps.interest, 0) + COALESCE(ps.padmin_fee, 0) + COALESCE(ps.ploan_cover, 0)) - COALESCE(ps.paid_amount, 0),
+                                0
+                            )
                         ELSE 0
                     END) as loan_charges,
                     MIN(CASE
@@ -64,8 +67,7 @@ async function generateArrearsReport(filterOptions, reportId, reportTrackers, db
                 ${sqlBranchJoin('l', 'b')}
                 LEFT JOIN employees e ON e.id = l.loan_added_by
                 LEFT JOIN employees rel_sup ON rel_sup.id = e.Supervisor
-                WHERE l.loan_status IN ('APPROVED', 'ACTIVE') 
-                AND l.disbursed = 'Yes'
+                WHERE l.loan_status = 'ACTIVE'
             `;
 
             let queryParams = [asOfDate, asOfDate, asOfDate, asOfDate, asOfDate, asOfDate];
@@ -224,9 +226,9 @@ async function generateArrearsHTML(loans, filterOptions, reportId, reportTracker
         <table style="width: 50%; margin: 0;">
             <tr><td><strong>Total Loans in Arrears:</strong></td><td>${totalLoansCount}</td></tr>
             <tr><td><strong>Total Arrears Amount (MWK):</strong></td><td>${totalArrears.toLocaleString('en-US', {minimumFractionDigits: 2})}</td></tr>
-            <tr><td><strong>Total Amount Disbursed (MWK):</strong></td><td>${totals.amountDisbursed.toLocaleString('en-US', {minimumFractionDigits: 2})}</td></tr>
+            <tr><td><strong>Total Amount Disbursed (MWK) in Arrears:</strong></td><td>${totals.amountDisbursed.toLocaleString('en-US', {minimumFractionDigits: 2})}</td></tr>
             <tr><td><strong>Total Loan Charges (MWK):</strong></td><td>${totals.loanCharges.toLocaleString('en-US', {minimumFractionDigits: 2})}</td></tr>
-            <tr><td><strong>Total Repayment Amount (MWK):</strong></td><td>${totals.repaymentAmount.toLocaleString('en-US', {minimumFractionDigits: 2})}</td></tr>
+            <tr><td><strong>Total Amount per Installment (MWK):</strong></td><td>${totals.repaymentAmount.toLocaleString('en-US', {minimumFractionDigits: 2})}</td></tr>
             <tr><td><strong>High Risk (>90 days):</strong></td><td>${highRiskCount} loans</td></tr>
             <tr><td><strong>Medium Risk (31-90 days):</strong></td><td>${mediumRiskCount} loans</td></tr>
             <tr><td><strong>Low Risk (1-30 days):</strong></td><td>${lowRiskCount} loans</td></tr>
@@ -247,11 +249,11 @@ async function generateArrearsHTML(loans, filterOptions, reportId, reportTracker
                 <th>Client Name</th>
                 <th>Customer Group</th>
                 <th>Product</th>
-                <th>Amount Disbursed (MWK)</th>
+                <th>Amount Disbursed in Arrears (MWK)</th>
                 <th>Loan Charges (MWK)</th>
                 <th>Term</th>
                 <th>Repayment Frequency</th>
-                <th>Repayment Amount (MWK)</th>
+                <th>Amount per Installment (MWK)</th>
                 <th>Due Date</th>
                 <th>Missed Payments</th>
                 <th>Total Arrears (MWK)</th>

@@ -5,7 +5,7 @@ const pool = mysql.createPool({
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'financerealm_sycamore_demo',
+    database: process.env.DB_NAME || 'live_sycamore',
     waitForConnections: true,
     connectionLimit: parseInt(process.env.DB_POOL_LIMIT || '15', 10),
     queueLimit: parseInt(process.env.DB_POOL_QUEUE_LIMIT || '0', 10),
@@ -498,6 +498,47 @@ function appendOfficerOrSupervisorLoanFilter(sql, ctx, loanAlias = 'loan', offic
     return sql;
 }
 
+/**
+ * SQL expression for the unpaid charges (interest + loan cover + admin fee) of a single
+ * payment schedule row, applying charge-first allocation.
+ *
+ * Charges are paid before principal, so unpaid charges = MAX(charges - paid_amount, 0)
+ * where charges = amount - principal.
+ *
+ * @param {string} alias - table alias for payement_schedules (default 'ps')
+ */
+function sqlUnpaidChargesExpr(alias = 'ps') {
+    return `GREATEST(
+        (COALESCE(${alias}.amount, 0) - COALESCE(${alias}.principal, 0)) - COALESCE(${alias}.paid_amount, 0),
+        0
+    )`;
+}
+
+/**
+ * SQL expression for the unpaid principal of a single payment schedule row,
+ * applying charge-first allocation priority:
+ *   Loan Cover → Admin Fee → Interest → Principal
+ *
+ * Payment is allocated to charges (amount - principal) first.
+ * Only after all charges are covered does the remainder reduce principal.
+ *
+ * Formula:
+ *   charges        = amount - principal
+ *   principal_paid = MAX(paid_amount - charges, 0)
+ *   unpaid_principal = MAX(principal - principal_paid, 0)
+ *
+ * @param {string} alias - table alias for payement_schedules (default 'ps')
+ */
+function sqlUnpaidPrincipalExpr(alias = 'ps') {
+    return `GREATEST(
+        COALESCE(${alias}.principal, 0) - GREATEST(
+            COALESCE(${alias}.paid_amount, 0) - (COALESCE(${alias}.amount, 0) - COALESCE(${alias}.principal, 0)),
+            0
+        ),
+        0
+    )`;
+}
+
 // Export all functions
 module.exports = {
     query, // Export the query function for other files to use
@@ -534,5 +575,7 @@ module.exports = {
     sqlRelationshipSupervisorNameExpr,
     sqlRelationshipSupervisorJoin,
     buildReportSupervisorContext,
-    appendOfficerOrSupervisorLoanFilter
+    appendOfficerOrSupervisorLoanFilter,
+    sqlUnpaidPrincipalExpr,
+    sqlUnpaidChargesExpr
 };

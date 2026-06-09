@@ -3786,13 +3786,22 @@ class Loan extends CI_Controller
 
     function view($id){
         $row = $this->Loan_model->get_by_id($id);
+
+        if (!$row) {
+            $this->toaster->error('Loan not found.');
+            redirect(site_url('loan'));
+            return;
+        }
+
         $payments = $this->Payement_schedules_model->get_all_by_id($row->loan_id);
         $payments = $this->enrich_loan_payments_for_display($payments);
         $payment_balance = $this->build_loan_payment_balance_summary($payments, $row);
 
+        $customer_name = '';
+        $preview_url   = '';
+
         if($row->customer_type=='group'){
             $group = $this->Groups_model->get_by_id($row->loan_customer);
-
             $customer_name = $group->group_name.'('.$group->group_code.')';
             $preview_url = "Customer_groups/members/";
         }elseif($row->customer_type=='individual'){
