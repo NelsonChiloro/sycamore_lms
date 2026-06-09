@@ -8,7 +8,9 @@ const {
     determineRBMClassification,
     getDaysOfArrears,
     getOfficerIdsUnderSupervisor,
-    sqlRelationshipSupervisorNameExpr
+    sqlRelationshipSupervisorNameExpr,
+    sqlUnpaidPrincipalExpr,
+    sqlUnpaidChargesExpr
 } = require('./databaseHelpers');
 
 async function appendParOfficerOrSupervisorFilter(whereClause, queryParams, officer, supervisor) {
@@ -203,8 +205,7 @@ async function generatePARReportV2(reportId, officer, product, branch, dateFrom,
             db.query(`
                 SELECT SUM(loan_principal) as total_portfolio
                 FROM loan
-                WHERE loan_status IN ('APPROVED', 'ACTIVE')
-                  AND disbursed = 'Yes'
+                WHERE loan_status = 'ACTIVE'
             `, async (err, portfolioRows) => {
                 if (err) {
                     reject(err);
@@ -219,7 +220,7 @@ async function generatePARReportV2(reportId, officer, product, branch, dateFrom,
                 console.log('[4/6] Fetching loan data for PAR analysis...');
                 
                 // Build where clause based on filters
-                let whereClause = `l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes'`;
+                let whereClause = `l.loan_status = 'ACTIVE'`;
                 const queryParams = [];
 
                 whereClause = await appendParOfficerOrSupervisorFilter(whereClause, queryParams, officer, supervisor);
@@ -626,10 +627,7 @@ async function generatePARReportV2Enhanced(reportId, officer, product, branch, d
         const reportAsOfDate = currentDate;
 
         console.log('[3/6] Calculating dashboard-aligned portfolio totals (Reports::get_summary_metrics)...');
-        let whereClause = `
-            l.loan_status IN ('APPROVED', 'ACTIVE')
-            AND l.disbursed = 'Yes'
-        `;
+        let whereClause = `l.loan_status = 'ACTIVE'`;
         const queryParams = [];
 
         whereClause = await appendParOfficerOrSupervisorFilter(whereClause, queryParams, officer, supervisor);
@@ -652,16 +650,26 @@ async function generatePARReportV2Enhanced(reportId, officer, product, branch, d
         }
 
         return new Promise((resolve, reject) => {
-                // total_unpaid-style sum (dashboard "Outstanding principal" card uses this metric)
+                // Gross Loan Portfolio = all unpaid principal (regardless of schedule date)
+                // Outstanding Balance  = unpaid principal + accrued charges earned up to end of as-of month
                 const dashboardTotalSql = `
-                    SELECT COALESCE(SUM(
-                        CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID')
-                        THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END
-                    ), 0) AS total_portfolio
+                    SELECT
+                        COUNT(DISTINCT l.loan_customer) AS customer_count,
+                        COALESCE(SUM(${sqlUnpaidPrincipalExpr('ps')}), 0) AS gross_loan_portfolio,
+                        COALESCE(SUM(
+                            CASE WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID')
+                                AND ps.payment_schedule <= LAST_DAY(DATE('${reportAsOfDate}'))
+                            THEN ${sqlUnpaidChargesExpr('ps')} ELSE 0 END
+                        ), 0) AS total_accrued_charges,
+                        COALESCE(SUM(${sqlUnpaidPrincipalExpr('ps')}), 0)
+                        + COALESCE(SUM(
+                            CASE WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID')
+                                AND ps.payment_schedule <= LAST_DAY(DATE('${reportAsOfDate}'))
+                            THEN ${sqlUnpaidChargesExpr('ps')} ELSE 0 END
+                        ), 0) AS total_outstanding_balance
                     FROM payement_schedules ps
                     INNER JOIN loan l ON l.loan_id = ps.loan_id
                     WHERE ${whereClause}
-                    AND ps.payment_schedule <= DATE('${reportAsOfDate}')
                 `;
 
                 db.query(dashboardTotalSql, queryParams, async (err, portfolioRows) => {
@@ -670,8 +678,13 @@ async function generatePARReportV2Enhanced(reportId, officer, product, branch, d
                     return;
                 }
 
-                const totalPortfolio = parseFloat(portfolioRows[0]?.total_portfolio || 0);
-                console.log(`      Dashboard-aligned outstanding (active): K${new Intl.NumberFormat('en-US').format(totalPortfolio.toFixed(2))}`);
+                const customerCount = parseInt(portfolioRows[0]?.customer_count || 0);
+                const totalPortfolio = parseFloat(portfolioRows[0]?.gross_loan_portfolio || 0);
+                const totalAccruedChargesSummary = parseFloat(portfolioRows[0]?.total_accrued_charges || 0);
+                const totalOutstandingBalanceSummary = parseFloat(portfolioRows[0]?.total_outstanding_balance || 0);
+                console.log(`      Gross Loan Portfolio (unpaid principal): K${new Intl.NumberFormat('en-US').format(totalPortfolio.toFixed(2))}`);
+                console.log(`      Total Accrued Charges: K${new Intl.NumberFormat('en-US').format(totalAccruedChargesSummary.toFixed(2))}`);
+                console.log(`      Total Outstanding Balance (principal + accrued charges): K${new Intl.NumberFormat('en-US').format(totalOutstandingBalanceSummary.toFixed(2))}`);
 
                 reportTrackers[reportId].percentage = 20;
 
@@ -708,13 +721,8 @@ async function generatePARReportV2Enhanced(reportId, officer, product, branch, d
                         b.BranchName as branch_name,
                         lp.product_name,
                         l.loan_amount_term as installment_amount,
-                        COALESCE(ps_metrics.par_1_14, 0) as par_1_14,
-                        COALESCE(ps_metrics.par_15_29, 0) as par_15_29,
-                        COALESCE(ps_metrics.par_30_59, 0) as par_30_59,
-                        COALESCE(ps_metrics.par_60_89, 0) as par_60_89,
-                        COALESCE(ps_metrics.par_90_179, 0) as par_90_179,
-                        COALESCE(ps_metrics.par_180_364, 0) as par_180_364,
-                        COALESCE(ps_metrics.par_365_plus, 0) as par_365_plus,
+                        COALESCE(ps_metrics.gross_loan_portfolio, 0) as gross_loan_portfolio,
+                        COALESCE(ps_metrics.accrued_charges, 0) as accrued_charges,
                         COALESCE(ps_metrics.outstanding_balance, 0) as outstanding_balance,
                         COALESCE(ps_metrics.total_expected, 0) as total_expected_installments,
                         COALESCE(ps_metrics.total_collected, 0) as actual_payments,
@@ -733,46 +741,26 @@ async function generatePARReportV2Enhanced(reportId, officer, product, branch, d
                     LEFT JOIN (
                         SELECT
                             ps.loan_id,
-                            SUM(CASE WHEN li.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID')
-                                AND ps.payment_schedule < DATE('${reportAsOfDate}')
-                                AND DATEDIFF(DATE('${reportAsOfDate}'), ps.payment_schedule) BETWEEN 1 AND 14
-                                THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS par_1_14,
-                            SUM(CASE WHEN li.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID')
-                                AND ps.payment_schedule < DATE('${reportAsOfDate}')
-                                AND DATEDIFF(DATE('${reportAsOfDate}'), ps.payment_schedule) BETWEEN 15 AND 29
-                                THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS par_15_29,
-                            SUM(CASE WHEN li.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID')
-                                AND ps.payment_schedule < DATE('${reportAsOfDate}')
-                                AND DATEDIFF(DATE('${reportAsOfDate}'), ps.payment_schedule) BETWEEN 30 AND 59
-                                THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS par_30_59,
-                            SUM(CASE WHEN li.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID')
-                                AND ps.payment_schedule < DATE('${reportAsOfDate}')
-                                AND DATEDIFF(DATE('${reportAsOfDate}'), ps.payment_schedule) BETWEEN 60 AND 89
-                                THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS par_60_89,
-                            SUM(CASE WHEN li.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID')
-                                AND ps.payment_schedule < DATE('${reportAsOfDate}')
-                                AND DATEDIFF(DATE('${reportAsOfDate}'), ps.payment_schedule) BETWEEN 90 AND 179
-                                THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS par_90_179,
-                            SUM(CASE WHEN li.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID')
-                                AND ps.payment_schedule < DATE('${reportAsOfDate}')
-                                AND DATEDIFF(DATE('${reportAsOfDate}'), ps.payment_schedule) BETWEEN 180 AND 364
-                                THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS par_180_364,
-                            SUM(CASE WHEN li.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID')
-                                AND ps.payment_schedule < DATE('${reportAsOfDate}')
-                                AND DATEDIFF(DATE('${reportAsOfDate}'), ps.payment_schedule) >= 365
-                                THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS par_365_plus,
-                            SUM(CASE WHEN li.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID')
-                                AND ps.payment_schedule <= DATE('${reportAsOfDate}')
-                                THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS outstanding_balance,
+                            -- Gross Loan Portfolio: unpaid principal with charge-first allocation
+                            SUM(${sqlUnpaidPrincipalExpr('ps')}) AS gross_loan_portfolio,
+                            -- Accrued Charges: unpaid interest/fees earned up to end of as-of month (charge-first allocation)
+                            SUM(CASE WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID')
+                                AND ps.payment_schedule <= LAST_DAY(DATE('${reportAsOfDate}'))
+                                THEN ${sqlUnpaidChargesExpr('ps')} ELSE 0 END) AS accrued_charges,
+                            -- Outstanding Balance: unpaid principal + unpaid accrued charges
+                            SUM(${sqlUnpaidPrincipalExpr('ps')})
+                                + SUM(CASE WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID')
+                                    AND ps.payment_schedule <= LAST_DAY(DATE('${reportAsOfDate}'))
+                                    THEN ${sqlUnpaidChargesExpr('ps')} ELSE 0 END) AS outstanding_balance,
                             SUM(CASE WHEN li.loan_status = 'ACTIVE' AND ps.payment_schedule <= DATE('${reportAsOfDate}') THEN ps.amount ELSE 0 END) AS total_expected,
                             SUM(CASE WHEN li.loan_status = 'ACTIVE' AND ps.payment_schedule <= DATE('${reportAsOfDate}') THEN ps.paid_amount ELSE 0 END) AS total_collected,
-                            COUNT(CASE WHEN li.loan_status IN ('APPROVED', 'ACTIVE') AND li.disbursed = 'Yes'
+                            COUNT(CASE WHEN li.loan_status = 'ACTIVE'
                                 AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < DATE('${reportAsOfDate}')
                                 AND COALESCE(ps.amount, 0) > COALESCE(ps.paid_amount, 0) THEN 1 END) AS payments_in_arrears,
-                            SUM(CASE WHEN li.loan_status IN ('APPROVED', 'ACTIVE') AND li.disbursed = 'Yes'
+                            SUM(CASE WHEN li.loan_status = 'ACTIVE'
                                 AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < DATE('${reportAsOfDate}')
                                 THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS amount_in_arrears,
-                            COALESCE(MAX(CASE WHEN li.loan_status IN ('APPROVED', 'ACTIVE') AND li.disbursed = 'Yes'
+                            COALESCE(MAX(CASE WHEN li.loan_status = 'ACTIVE'
                                 AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < DATE('${reportAsOfDate}')
                                 AND COALESCE(ps.amount, 0) > COALESCE(ps.paid_amount, 0)
                                 THEN DATEDIFF(DATE('${reportAsOfDate}'), ps.payment_schedule) END), 0) AS days_in_arrears,
@@ -782,7 +770,7 @@ async function generatePARReportV2Enhanced(reportId, officer, product, branch, d
                         GROUP BY ps.loan_id
                     ) ps_metrics ON ps_metrics.loan_id = l.loan_id
                     LEFT JOIN (
-                        SELECT account_number, MAX(system_time) as last_payment_date
+                        SELECT account_number, MAX(server_time) as last_payment_date
                         FROM \`transaction\`
                         WHERE credit > 0
                         GROUP BY account_number
@@ -809,15 +797,6 @@ async function generatePARReportV2Enhanced(reportId, officer, product, branch, d
                             const loanId = loan.loan_id;
                             const loanNum = loan.loan_number;
 
-                            const paymentAnalysis = {
-                                par_1_14: parseFloat(loan.par_1_14) || 0,
-                                par_15_29: parseFloat(loan.par_15_29) || 0,
-                                par_30_59: parseFloat(loan.par_30_59) || 0,
-                                par_60_89: parseFloat(loan.par_60_89) || 0,
-                                par_90_179: parseFloat(loan.par_90_179) || 0,
-                                par_180_364: parseFloat(loan.par_180_364) || 0,
-                                par_365_plus: parseFloat(loan.par_365_plus) || 0
-                            };
                             const arrearsInfo = {
                                 days_in_arrears: parseInt(loan.days_in_arrears, 10) || 0,
                                 amount_in_arrears: parseFloat(loan.amount_in_arrears) || 0,
@@ -857,6 +836,8 @@ async function generatePARReportV2Enhanced(reportId, officer, product, branch, d
                                 loan_principal: parseFloat(loan.loan_principal) || 0,
                                 total_loan_amount: parseFloat(loan.total_loan_amount) || 0,
                                 installment_amount: parseFloat(loan.installment_amount) || 0,
+                                gross_loan_portfolio: parseFloat(loan.gross_loan_portfolio) || 0,
+                                accrued_charges: parseFloat(loan.accrued_charges) || 0,
                                 outstanding_balance: outstandingBalance,
                                 total_expected_installments: paymentTotals.total_expected,
                                 actual_payments: paymentTotals.total_collected,
@@ -868,16 +849,15 @@ async function generatePARReportV2Enhanced(reportId, officer, product, branch, d
                                 amount_in_arrears: arrearsInfo.amount_in_arrears,
                                 payments_in_arrears: arrearsInfo.payments_in_arrears,
 
-                                // PAR classifications - CORRECTED TO MATCH getDetailedPaymentAnalysis RETURN VALUES
-                                par_1_14_days: paymentAnalysis.par_1_14,
-                                par_15_29_days: paymentAnalysis.par_15_29,
-                                par_30_59_days: paymentAnalysis.par_30_59,
-                                par_60_89_days: paymentAnalysis.par_60_89,
-                                par_90_179_days: paymentAnalysis.par_90_179,
-                                par_180_364_days: paymentAnalysis.par_180_364,
-                                par_365_plus_days: paymentAnalysis.par_365_plus,
+                                // PAR classification (most severe bucket this loan falls into)
+                                par_classification: arrearsInfo.days_in_arrears > 180 ? 'PAR180'
+                                    : arrearsInfo.days_in_arrears > 90  ? 'PAR90'
+                                    : arrearsInfo.days_in_arrears > 60  ? 'PAR60'
+                                    : arrearsInfo.days_in_arrears > 30  ? 'PAR30'
+                                    : arrearsInfo.days_in_arrears > 0   ? 'PAR1'
+                                    : 'Current',
 
-                                // FIXED: Dates
+                                // Dates
                                 last_payment_date: lastPaymentDate,
                                 maturity_date: maturityDate,
                                 loan_added_date: loan.loan_added_date,
@@ -900,6 +880,25 @@ async function generatePARReportV2Enhanced(reportId, officer, product, branch, d
                         console.log(`Successfully processed ${processedLoans.length} loans`);
                         reportTrackers[reportId].percentage = 80;
 
+                        // Compute strict international PAR metrics:
+                        // PAR(N) = SUM(full outstanding principal of loans where days_in_arrears > N)
+                        //          ─────────────────────────────────────────────────────────────────
+                        //                         Total Gross Loan Portfolio
+                        const grossTotal = processedLoans.reduce((s, l) => s + (l.gross_loan_portfolio || 0), 0);
+                        const parSummary = [
+                            { label: 'PAR1',   days: 1   },
+                            { label: 'PAR30',  days: 30  },
+                            { label: 'PAR60',  days: 60  },
+                            { label: 'PAR90',  days: 90  },
+                            { label: 'PAR180', days: 180 },
+                        ].map(({ label, days }) => {
+                            const atRiskLoans = processedLoans.filter(l => (l.days_in_arrears || 0) > days);
+                            const principal   = atRiskLoans.reduce((s, l) => s + (l.gross_loan_portfolio || 0), 0);
+                            const rate        = grossTotal > 0 ? (principal / grossTotal) * 100 : 0;
+                            return { label, days, loanCount: atRiskLoans.length, principal, rate };
+                        });
+                        console.log('[PAR Summary]', parSummary.map(p => `${p.label}: ${p.rate.toFixed(2)}%`).join(' | '));
+
                         console.log('[6/6] Generating Enhanced PAR Portfolio Report...');
 
                         // Get filter display names
@@ -913,7 +912,11 @@ async function generatePARReportV2Enhanced(reportId, officer, product, branch, d
                             filterDisplayNames,
                             dateFrom,
                             dateTo,
-                            reportAsOfDate
+                            reportAsOfDate,
+                            totalOutstandingBalanceSummary,
+                            totalAccruedChargesSummary,
+                            customerCount,
+                            parSummary
                         );
 
                         // Write to file
@@ -1117,7 +1120,7 @@ async function calculatePaymentTotals(loanId, db, asOfDate = moment().format('YY
 async function getLastPaymentDate(loanNumber, db) {
     return new Promise((resolve, reject) => {
         const transactionQuery = `
-            SELECT MAX(system_time) as last_payment_date
+            SELECT MAX(server_time) as last_payment_date
             FROM transaction
             WHERE account_number = ? AND credit > 0
         `;
@@ -1215,7 +1218,7 @@ async function getFilterDisplayNames(branch, officer, product, db) {
  * @param {string} dateTo - End date
  * @returns {string} HTML report content
  */
-function generateEnhancedPortfolioReport(currentDate, loans, totalPortfolio, filterDisplayNames, dateFrom, dateTo, reportAsOfDate = null) {
+function generateEnhancedPortfolioReport(currentDate, loans, totalPortfolio, filterDisplayNames, dateFrom, dateTo, reportAsOfDate = null, totalOutstandingBalanceSummary = null, totalAccruedChargesSummary = null, customerCount = null, parSummary = []) {
     const formatCurrency = (amount) => {
         if (isNaN(amount) || amount === null || amount === undefined) {
             return '0.00';
@@ -1242,14 +1245,16 @@ function generateEnhancedPortfolioReport(currentDate, loans, totalPortfolio, fil
         return moment(dateString).format('MM/DD/YYYY');
     };
 
-    // Calculate summary statistics
+    // Calculate summary statistics — all derived from the same loans array used for PAR
     const totalLoans = loans.length;
+    const totalGrossPortfolio     = loans.reduce((sum, loan) => sum + (loan.gross_loan_portfolio || 0), 0);
+    const totalAccruedCharges     = loans.reduce((sum, loan) => sum + (loan.accrued_charges || 0), 0);
     const totalOutstandingBalance = loans.reduce((sum, loan) => sum + (loan.outstanding_balance || 0), 0);
-    const totalInArrears = loans.reduce((sum, loan) => sum + (loan.amount_in_arrears || 0), 0);
+    const totalInArrears          = loans.reduce((sum, loan) => sum + (loan.amount_in_arrears || 0), 0);
     const totalPrincipalDisbursed = loans.reduce((sum, loan) => sum + (loan.loan_principal || 0), 0);
     const totalExpectedInstallments = loans.reduce((sum, loan) => sum + (loan.total_expected_installments || 0), 0);
-    const totalActualPayments = loans.reduce((sum, loan) => sum + (loan.actual_payments || 0), 0);
-    const totalCollateralValue = loans.reduce((sum, loan) => sum + (loan.collateral_value || 0), 0);
+    const totalActualPayments     = loans.reduce((sum, loan) => sum + (loan.actual_payments || 0), 0);
+    const totalCollateralValue    = loans.reduce((sum, loan) => sum + (loan.collateral_value || 0), 0);
 
     // Generate loan rows
     const loanRows = loans.map((loan, index) => {
@@ -1267,9 +1272,12 @@ function generateEnhancedPortfolioReport(currentDate, loans, totalPortfolio, fil
                 <td>${loan.loan_interest || 0}%</td>
                 <td class="text-right">${formatCurrency(loan.total_loan_amount)}</td>
                 <td class="text-right">${formatCurrency(loan.installment_amount)}</td>
+                <td class="text-right">${formatCurrency(loan.gross_loan_portfolio)}</td>
+                <td class="text-right">${formatCurrency(loan.accrued_charges)}</td>
                 <td class="text-right">${formatCurrency(loan.outstanding_balance)}</td>
                 <td class="text-right">${formatCurrency(loan.amount_in_arrears)}</td>
                 <td class="text-center">${loan.days_in_arrears || 0}</td>
+                <td style="font-weight:bold;color:${loan.par_classification === 'Current' ? '#27ae60' : loan.par_classification === 'PAR1' ? '#e67e22' : '#c0392b'};">${loan.par_classification || 'Current'}</td>
                 <td>${loan.rbm_classification || determineRBMClassification(loan.days_in_arrears || 0)}</td>
                 <td class="text-center">${loan.payments_in_arrears || 0}</td>
                 <td class="text-right">${formatPercentage(loan.collection_rate)}</td>
@@ -1344,26 +1352,78 @@ function generateEnhancedPortfolioReport(currentDate, loans, totalPortfolio, fil
             ${reportAsOfDate ? ` | Balance As At: ${formatDate(reportAsOfDate)}` : ''}
         </div>
 
+        ${parSummary.length ? `
+        <div style="margin-bottom:20px;">
+            <h3 style="color:#153505;margin-bottom:8px;">Portfolio at Risk (PAR)</h3>
+            <p style="font-size:11px;color:#555;margin-bottom:8px;">
+                PAR(N) = Full outstanding principal of loans with arrears &gt; N days &divide; Total Gross Loan Portfolio.
+                Each loan's <em>entire</em> unpaid principal is counted once it crosses the threshold.
+            </p>
+            <table style="width:auto;border-collapse:collapse;font-size:12px;">
+                <thead>
+                    <tr>
+                        <th style="background:#153505;color:white;padding:6px 12px;border:1px solid #ddd;">Metric</th>
+                        <th style="background:#153505;color:white;padding:6px 12px;border:1px solid #ddd;">Threshold</th>
+                        <th style="background:#153505;color:white;padding:6px 12px;border:1px solid #ddd;">Loans at Risk</th>
+                        <th style="background:#153505;color:white;padding:6px 12px;border:1px solid #ddd;">Principal at Risk (MWK)</th>
+                        <th style="background:#153505;color:white;padding:6px 12px;border:1px solid #ddd;">PAR %</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${parSummary.map((p, i) => `
+                    <tr style="background:${i % 2 === 0 ? '#f9f9f9' : 'white'}">
+                        <td style="padding:6px 12px;border:1px solid #ddd;font-weight:bold;color:#153505;">${p.label}</td>
+                        <td style="padding:6px 12px;border:1px solid #ddd;text-align:center;">&gt; ${p.days} days</td>
+                        <td style="padding:6px 12px;border:1px solid #ddd;text-align:right;">${p.loanCount.toLocaleString()}</td>
+                        <td style="padding:6px 12px;border:1px solid #ddd;text-align:right;">${formatCurrency(p.principal)}</td>
+                        <td style="padding:6px 12px;border:1px solid #ddd;text-align:right;font-weight:bold;color:${p.rate > 10 ? '#c0392b' : p.rate > 5 ? '#e67e22' : '#27ae60'};">${p.rate.toFixed(2)}%</td>
+                    </tr>`).join('')}
+                </tbody>
+                <tfoot>
+                    <tr style="background:#e8f5e8;font-weight:bold;">
+                        <td style="padding:6px 12px;border:1px solid #ddd;" colspan="2">Total Gross Loan Portfolio</td>
+                        <td style="padding:6px 12px;border:1px solid #ddd;text-align:right;">${loans.length.toLocaleString()} loans</td>
+                        <td style="padding:6px 12px;border:1px solid #ddd;text-align:right;">${formatCurrency(totalGrossPortfolio)}</td>
+                        <td style="padding:6px 12px;border:1px solid #ddd;text-align:right;">100.00%</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>` : ''}
+
         <div class="summary">
+            <div class="summary-item">
+                <div class="summary-label">Total Customers</div>
+                <div class="summary-value">${customerCount !== null ? customerCount.toLocaleString() : totalLoans}</div>
+                <div style="font-size:10px;color:#888">Distinct borrowers</div>
+            </div>
             <div class="summary-item">
                 <div class="summary-label">Total Loans</div>
                 <div class="summary-value">${totalLoans}</div>
             </div>
             <div class="summary-item">
-                <div class="summary-label">Total Portfolio</div>
-                <div class="summary-value">K${formatCurrency(totalPortfolio)}</div>
+                <div class="summary-label">Gross Loan Portfolio</div>
+                <div class="summary-value">K${formatCurrency(totalGrossPortfolio)}</div>
+                <div style="font-size:10px;color:#888">Unpaid principal only</div>
             </div>
             <div class="summary-item">
-                <div class="summary-label">Outstanding Balance</div>
+                <div class="summary-label">Accrued Charges</div>
+                <div class="summary-value">K${formatCurrency(totalAccruedCharges)}</div>
+                <div style="font-size:10px;color:#888">Interest/fees earned, unpaid</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-label">Outstanding Loan Balance</div>
                 <div class="summary-value">K${formatCurrency(totalOutstandingBalance)}</div>
+                <div style="font-size:10px;color:#888">Principal + accrued charges</div>
             </div>
             <div class="summary-item">
                 <div class="summary-label">Total in Arrears</div>
                 <div class="summary-value">K${formatCurrency(totalInArrears)}</div>
+                <div style="font-size:10px;color:#888">Overdue unpaid amounts</div>
             </div>
             <div class="summary-item">
                 <div class="summary-label">Principal Disbursed</div>
                 <div class="summary-value">K${formatCurrency(totalPrincipalDisbursed)}</div>
+                <div style="font-size:10px;color:#888">Original disbursed principal</div>
             </div>
             <div class="summary-item">
                 <div class="summary-label">Collection Rate</div>
@@ -1393,9 +1453,12 @@ function generateEnhancedPortfolioReport(currentDate, loans, totalPortfolio, fil
                     <th>Interest Rate</th>
                     <th>Total Loan Amount</th>
                     <th>Installment Amount</th>
-                    <th>Outstanding Balance</th>
+                    <th>Unpaid Principal (MWK)</th>
+                    <th>Accrued Charges (MWK)</th>
+                    <th>Outstanding Balance (MWK)</th>
                     <th>Amount in Arrears (MWK)</th>
                     <th>Days in Arrears</th>
+                    <th>PAR Classification</th>
                     <th>RBM Loan Classification</th>
                     <th>Payments in Arrears</th>
                     <th>Collection Rate</th>
@@ -1420,9 +1483,12 @@ function generateEnhancedPortfolioReport(currentDate, loans, totalPortfolio, fil
                     <td class="text-center">-</td>
                     <td class="text-right">${formatCurrency(loans.reduce((sum, loan) => sum + (loan.total_loan_amount || 0), 0))}</td>
                     <td class="text-right">${formatCurrency(loans.reduce((sum, loan) => sum + (loan.installment_amount || 0), 0))}</td>
+                    <td class="text-right">${formatCurrency(loans.reduce((sum, loan) => sum + (loan.gross_loan_portfolio || 0), 0))}</td>
+                    <td class="text-right">${formatCurrency(loans.reduce((sum, loan) => sum + (loan.accrued_charges || 0), 0))}</td>
                     <td class="text-right">${formatCurrency(totalOutstandingBalance)}</td>
                     <td class="text-right">${formatCurrency(totalInArrears)}</td>
                     <td class="text-center">${Math.round(loans.reduce((sum, loan) => sum + (loan.days_in_arrears || 0), 0) / totalLoans)}</td>
+                    <td class="text-center">-</td>
                     <td class="text-center">-</td>
                     <td class="text-center">${loans.reduce((sum, loan) => sum + (loan.payments_in_arrears || 0), 0)}</td>
                     <td class="text-right">${formatPercentage(loans.reduce((sum, loan) => sum + (loan.collection_rate || 0), 0) / totalLoans)}</td>
@@ -1445,7 +1511,10 @@ function generateEnhancedPortfolioReport(currentDate, loans, totalPortfolio, fil
             <ul style="margin: 0; padding-left: 20px;">
                 <li>This is a comprehensive portfolio report showing detailed loan information for all active loans</li>
                 <li>Collection Rate = (Actual Payments / Expected Installments) × 100</li>
-                <li>Outstanding Balance represents the remaining amount to be collected on each loan</li>
+                <li>Unpaid Principal = total unpaid principal across all outstanding schedules (no charges)</li>
+                <li>Accrued Charges = interest/fees earned up to end of current month that remain unpaid</li>
+                <li>Outstanding Loan Balance = Unpaid Principal + Accrued Charges</li>
+                <li>PAR(N) = Full outstanding principal of loans with arrears &gt; N days &divide; Total Gross Loan Portfolio. Once a loan crosses the threshold, the <em>entire</em> unpaid principal is counted — not just the overdue installment.</li>
                 <li>Arrears information shows loans with missed or overdue payments</li>
                 <li>This report includes all active loans meeting the specified filter criteria</li>
             </ul>

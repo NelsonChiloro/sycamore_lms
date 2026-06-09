@@ -7,7 +7,8 @@ const {
     findBranch,
     determineRBMClassification,
     getOfficerIdsUnderSupervisor,
-    sqlRelationshipSupervisorNameExpr
+    sqlRelationshipSupervisorNameExpr,
+    sqlUnpaidPrincipalExpr
 } = require('./databaseHelpers');
 
 async function appendParOfficerOrSupervisorFilter(whereClause, queryParams, officer, supervisor) {
@@ -187,19 +188,17 @@ async function getOldestOverduePayment(loanId, db, asOfDate = moment().format('Y
  * @param {Object} db - Database connection
  * @returns {Promise<number>} Total portfolio principal
  */
-async function getTotalPortfolioPrincipal(db, asOfDate = moment().format('YYYY-MM-DD')) {
+async function getTotalPortfolioPrincipal(db) {
     return new Promise((resolve, reject) => {
         const query = `
-            SELECT 
-                COALESCE(SUM(CASE WHEN ps.status = 'NOT PAID' THEN ps.principal ELSE 0 END), 0) as total_principal
+            SELECT
+                COALESCE(SUM(${sqlUnpaidPrincipalExpr('ps')}), 0) as total_principal
             FROM payement_schedules ps
             INNER JOIN loan l ON ps.loan_id = l.loan_id
-            WHERE l.loan_status IN ('APPROVED', 'ACTIVE') 
-            AND l.disbursed = 'Yes'
-            AND ps.payment_schedule <= DATE(?)
+            WHERE l.loan_status = 'ACTIVE'
         `;
 
-        db.query(query, [asOfDate], (err, results) => {
+        db.query(query, [], (err, results) => {
             if (err) {
                 reject(err);
                 return;
@@ -247,8 +246,8 @@ async function generatePrincipalBalancePARReport(reportId, officer, product, bra
 
         console.log('[3/6] Calculating total portfolio principal...');
         
-        // Calculate total portfolio principal (NOT PAID)
-        const totalPortfolioPrincipal = await getTotalPortfolioPrincipal(db, reportAsOfDate);
+        // Gross Loan Portfolio = ALL unpaid principal for active loans (no date cutoff)
+        const totalPortfolioPrincipal = await getTotalPortfolioPrincipal(db);
         console.log(`      Total portfolio principal: K${new Intl.NumberFormat('en-US').format(totalPortfolioPrincipal.toFixed(2))}`);
 
         reportTrackers[reportId].percentage = 20;
@@ -256,7 +255,7 @@ async function generatePrincipalBalancePARReport(reportId, officer, product, bra
         console.log('[4/6] Fetching loan data for Principal Balance PAR analysis...');
         
         // Build where clause based on filters
-        let whereClause = `l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes'`;
+        let whereClause = `l.loan_status = 'ACTIVE'`;
         const queryParams = [];
 
         whereClause = await appendParOfficerOrSupervisorFilter(whereClause, queryParams, officer, supervisor);
@@ -318,19 +317,24 @@ async function generatePrincipalBalancePARReport(reportId, officer, product, bra
                 LEFT JOIN loan_products lp ON l.loan_product = lp.loan_product_id
                 LEFT JOIN (
                     SELECT
-                        loan_id,
-                        COALESCE(SUM(CASE WHEN status = 'NOT PAID' THEN principal ELSE 0 END), 0) as principal_balance,
+                        ps.loan_id,
+                        COALESCE(SUM(${sqlUnpaidPrincipalExpr('ps')}), 0) as principal_balance,
                         COALESCE(SUM(CASE
-                            WHEN status = 'NOT PAID' AND payment_schedule < DATE('${reportAsOfDate}') THEN amount
+                            WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < DATE('${reportAsOfDate}')
+                            THEN ps.amount - COALESCE(ps.paid_amount, 0)
                             ELSE 0
                         END), 0) as total_arrears,
+                        COALESCE(SUM(CASE
+                            WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < DATE('${reportAsOfDate}') THEN ps.principal
+                            ELSE 0
+                        END), 0) as arrears_principal,
                         COALESCE(MIN(CASE
-                            WHEN status = 'NOT PAID' AND payment_schedule < DATE('${reportAsOfDate}')
-                            THEN DATEDIFF(DATE('${reportAsOfDate}'), payment_schedule)
+                            WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < DATE('${reportAsOfDate}')
+                            THEN DATEDIFF(DATE('${reportAsOfDate}'), ps.payment_schedule)
                             ELSE NULL
                         END), 0) as oldest_overdue_days
-                    FROM payement_schedules
-                    GROUP BY loan_id
+                    FROM payement_schedules ps
+                    GROUP BY ps.loan_id
                 ) ps_metrics ON ps_metrics.loan_id = l.loan_id
                 WHERE ${whereClause}
             `;
@@ -365,6 +369,7 @@ async function generatePrincipalBalancePARReport(reportId, officer, product, bra
 
                         const principalBalance = parseFloat(loan.principal_balance) || 0;
                         const paymentAmountInArrears = parseFloat(loan.total_arrears) || 0;
+                        const arrearsPrincipal = parseFloat(loan.arrears_principal) || 0;
                         const oldestOverdueDays = parseInt(loan.oldest_overdue_days, 10) || 0;
 
                         // Initialize aging buckets
@@ -403,10 +408,10 @@ async function generatePrincipalBalancePARReport(reportId, officer, product, bra
                         // Calculate >=1 day total (sum of all aging buckets)
                         const aged_1_plus_days = aged_0_7_days + aged_8_30_days + aged_31_60_days + aged_61_90_days + aged_91_120_days + aged_121_180_days + aged_181_366_days + aged_367_plus_days;
                         
-                        // Total arrears is the actual payment amounts in arrears, not principal balance
                         const total_arrears = paymentAmountInArrears;
 
                         processedLoans.push({
+                            loanCustomer: loan.loan_customer,
                             customerName,
                             customerGroupName: loan.customer_group_name || 'N/A',
                             loanNumber: loan.loan_number || 'N/A',
@@ -418,6 +423,7 @@ async function generatePrincipalBalancePARReport(reportId, officer, product, bra
                             loanPeriod: loan.loan_period,
                             loanInterest: loan.loan_interest,
                             principalBalance: principalBalance,
+                            arrearsPrincipal: arrearsPrincipal,
                             oldestOverdueDays: oldestOverdueDays,
                             rbm_classification: determineRBMClassification(oldestOverdueDays),
                             total_arrears,
@@ -553,6 +559,7 @@ function generatePrincipalBalancePARHTML(currentDate, loans, totalPortfolioPrinc
     // Calculate totals for each aging bucket
     const total_principal_balance = loans.reduce((sum, loan) => sum + loan.principalBalance, 0);
     const total_arrears = loans.reduce((sum, loan) => sum + loan.total_arrears, 0);
+    const total_arrears_principal = loans.reduce((sum, loan) => sum + (loan.arrearsPrincipal || 0), 0);
     const total_1_plus_days = loans.reduce((sum, loan) => sum + loan.aged_1_plus_days, 0);
     const total_0_7_days = loans.reduce((sum, loan) => sum + loan.aged_0_7_days, 0);
     const total_8_30_days = loans.reduce((sum, loan) => sum + loan.aged_8_30_days, 0);
@@ -563,17 +570,40 @@ function generatePrincipalBalancePARHTML(currentDate, loans, totalPortfolioPrinc
     const total_181_366_days = loans.reduce((sum, loan) => sum + loan.aged_181_366_days, 0);
     const total_367_plus_days = loans.reduce((sum, loan) => sum + loan.aged_367_plus_days, 0);
 
-    // Calculate PAR percentages based on total principal balance from filtered loans
-    const par_arrears_percent = total_principal_balance > 0 ? (total_arrears / total_principal_balance) * 100 : 0;
-    const par_1_plus_percent = total_principal_balance > 0 ? (total_1_plus_days / total_principal_balance) * 100 : 0;
-    const par_0_7_percent = total_principal_balance > 0 ? (total_0_7_days / total_principal_balance) * 100 : 0;
-    const par_8_30_percent = total_principal_balance > 0 ? (total_8_30_days / total_principal_balance) * 100 : 0;
-    const par_31_60_percent = total_principal_balance > 0 ? (total_31_60_days / total_principal_balance) * 100 : 0;
-    const par_61_90_percent = total_principal_balance > 0 ? (total_61_90_days / total_principal_balance) * 100 : 0;
-    const par_91_120_percent = total_principal_balance > 0 ? (total_91_120_days / total_principal_balance) * 100 : 0;
-    const par_121_180_percent = total_principal_balance > 0 ? (total_121_180_days / total_principal_balance) * 100 : 0;
-    const par_181_366_percent = total_principal_balance > 0 ? (total_181_366_days / total_principal_balance) * 100 : 0;
-    const par_367_plus_percent = total_principal_balance > 0 ? (total_367_plus_days / total_principal_balance) * 100 : 0;
+    // Gross Loan Portfolio = total unpaid principal from filtered loans (same source as aging buckets)
+    const glp = total_principal_balance;
+
+    // Customer / loan counts
+    const totalLoans        = loans.length;
+    const loansInArrears    = loans.filter(l => l.oldestOverdueDays > 0).length;
+    const loansCurrent      = totalLoans - loansInArrears;
+    const distinctCustomers = new Set(loans.map(l => l.loanCustomer)).size;
+    const customersInArrears = new Set(loans.filter(l => l.oldestOverdueDays > 0).map(l => l.loanCustomer)).size;
+    const customersCurrent   = new Set(loans.filter(l => l.oldestOverdueDays === 0).map(l => l.loanCustomer)).size;
+
+    // Cumulative PAR: PAR(N) = full principal of loans with oldest_overdue > N days / GLP
+    const par1_principal   = total_1_plus_days;
+    const par30_principal  = total_31_60_days + total_61_90_days + total_91_120_days + total_121_180_days + total_181_366_days + total_367_plus_days;
+    const par60_principal  = total_61_90_days + total_91_120_days + total_121_180_days + total_181_366_days + total_367_plus_days;
+    const par90_principal  = total_91_120_days + total_121_180_days + total_181_366_days + total_367_plus_days;
+    const par180_principal = total_181_366_days + total_367_plus_days;
+
+    const par1_rate   = glp > 0 ? (par1_principal   / glp) * 100 : 0;
+    const par30_rate  = glp > 0 ? (par30_principal  / glp) * 100 : 0;
+    const par60_rate  = glp > 0 ? (par60_principal  / glp) * 100 : 0;
+    const par90_rate  = glp > 0 ? (par90_principal  / glp) * 100 : 0;
+    const par180_rate = glp > 0 ? (par180_principal / glp) * 100 : 0;
+
+    // Bucket percentages (share of each age range in the portfolio)
+    const par_1_plus_percent  = glp > 0 ? (total_1_plus_days  / glp) * 100 : 0;
+    const par_0_7_percent     = glp > 0 ? (total_0_7_days     / glp) * 100 : 0;
+    const par_8_30_percent    = glp > 0 ? (total_8_30_days    / glp) * 100 : 0;
+    const par_31_60_percent   = glp > 0 ? (total_31_60_days   / glp) * 100 : 0;
+    const par_61_90_percent   = glp > 0 ? (total_61_90_days   / glp) * 100 : 0;
+    const par_91_120_percent  = glp > 0 ? (total_91_120_days  / glp) * 100 : 0;
+    const par_121_180_percent = glp > 0 ? (total_121_180_days / glp) * 100 : 0;
+    const par_181_366_percent = glp > 0 ? (total_181_366_days / glp) * 100 : 0;
+    const par_367_plus_percent= glp > 0 ? (total_367_plus_days/ glp) * 100 : 0;
 
     // Generate loan rows
     const loanRows = loans.map(loan => {
@@ -630,13 +660,95 @@ function generatePrincipalBalancePARHTML(currentDate, loans, totalPortfolioPrinc
             </script>
         </head>
         <body>
+            <h2 style="color:#153505;margin-bottom:4px;">Principal Balance PAR Report</h2>
+            <p style="margin:0 0 10px;color:#555;font-size:11px;">
+                Sycamore Limited (MALAWI) &mdash; As Of: ${moment(currentDate).format('MM/DD/YYYY')}
+                &nbsp;|&nbsp; Branch: ${branchName}
+                ${dateRangeDisplay ? `&nbsp;|&nbsp; ${dateRangeDisplay}` : ''}
+            </p>
+
+            <!-- STATS SUMMARY -->
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:16px;">
+                <div style="background:#f5f5f5;border:1px solid #ddd;border-radius:4px;padding:10px;text-align:center;">
+                    <div style="font-size:11px;color:#555;">All Loan Accounts</div>
+                    <div style="font-size:18px;font-weight:bold;color:#333;">${totalLoans.toLocaleString()}</div>
+                    <div style="font-size:10px;color:#888;">Total active loans (a customer may have more than one)</div>
+                </div>
+                <div style="background:#e8f5e8;border:1px solid #c8e6c9;border-radius:4px;padding:10px;text-align:center;">
+                    <div style="font-size:11px;color:#555;">Distinct Customers</div>
+                    <div style="font-size:18px;font-weight:bold;color:#153505;">${distinctCustomers.toLocaleString()}</div>
+                    <div style="font-size:10px;color:#888;">Unique individual borrowers</div>
+                </div>
+                <div style="background:#fff3e0;border:1px solid #ffe0b2;border-radius:4px;padding:10px;text-align:center;">
+                    <div style="font-size:11px;color:#555;">Customers in Arrears</div>
+                    <div style="font-size:18px;font-weight:bold;color:#e67e22;">${customersInArrears.toLocaleString()}</div>
+                    <div style="font-size:10px;color:#888;">${distinctCustomers > 0 ? ((customersInArrears/distinctCustomers)*100).toFixed(1) : '0.0'}% — have at least 1 overdue payment</div>
+                </div>
+                <div style="background:#e8f5e8;border:1px solid #c8e6c9;border-radius:4px;padding:10px;text-align:center;">
+                    <div style="font-size:11px;color:#555;">Customers Current</div>
+                    <div style="font-size:18px;font-weight:bold;color:#27ae60;">${customersCurrent.toLocaleString()}</div>
+                    <div style="font-size:10px;color:#888;">${distinctCustomers > 0 ? ((customersCurrent/distinctCustomers)*100).toFixed(1) : '0.0'}% — all payments up to date, no overdue schedules</div>
+                </div>
+                <div style="background:#fff8e1;border:1px solid #ffe082;border-radius:4px;padding:10px;text-align:center;">
+                    <div style="font-size:11px;color:#555;">Total Amount in Arrears</div>
+                    <div style="font-size:15px;font-weight:bold;color:#b7770d;">K${formatCurrency(total_arrears)}</div>
+                    <div style="font-size:10px;color:#888;">Overdue installments (principal + charges)</div>
+                </div>
+                <div style="background:#fce4ec;border:1px solid #f8bbd0;border-radius:4px;padding:10px;text-align:center;">
+                    <div style="font-size:11px;color:#555;">Total Principal at Risk</div>
+                    <div style="font-size:15px;font-weight:bold;color:#c0392b;">K${formatCurrency(total_1_plus_days)}</div>
+                    <div style="font-size:10px;color:#888;">Full loan principal of all loans with any arrears — ${glp > 0 ? ((total_1_plus_days/glp)*100).toFixed(2) : '0.00'}% of GLP</div>
+                </div>
+                <div style="background:#e8f5e8;border:1px solid #c8e6c9;border-radius:4px;padding:10px;text-align:center;">
+                    <div style="font-size:11px;color:#555;">Gross Loan Portfolio</div>
+                    <div style="font-size:15px;font-weight:bold;color:#153505;">K${formatCurrency(glp)}</div>
+                    <div style="font-size:10px;color:#888;">Total unpaid principal — all active loans</div>
+                </div>
+            </div>
+
+            <!-- PAR SUMMARY at the top -->
+            <table style="border-collapse:collapse;font-size:12px;margin-bottom:16px;width:auto;">
+                <tr>
+                    <th colspan="5" style="background:#153505;color:white;padding:6px 12px;border:1px solid #999;text-align:left;">
+                        Portfolio at Risk (PAR) &mdash; PAR(N) = Full principal of loans with arrears &gt; N days &divide; Gross Loan Portfolio
+                    </th>
+                </tr>
+                <tr style="background:#f0f0f0;font-weight:bold;">
+                    <td style="padding:5px 10px;border:1px solid #999;">Metric</td>
+                    <td style="padding:5px 10px;border:1px solid #999;">Threshold</td>
+                    <td style="padding:5px 10px;border:1px solid #999;text-align:right;">Loans at Risk</td>
+                    <td style="padding:5px 10px;border:1px solid #999;text-align:right;">Principal at Risk (MWK)</td>
+                    <td style="padding:5px 10px;border:1px solid #999;text-align:right;">PAR %</td>
+                </tr>
+                ${[
+                    { label:'PAR1',   rate: par1_rate,   principal: par1_principal,   count: loans.filter(l=>l.oldestOverdueDays>0).length   },
+                    { label:'PAR30',  rate: par30_rate,  principal: par30_principal,  count: loans.filter(l=>l.oldestOverdueDays>30).length  },
+                    { label:'PAR60',  rate: par60_rate,  principal: par60_principal,  count: loans.filter(l=>l.oldestOverdueDays>60).length  },
+                    { label:'PAR90',  rate: par90_rate,  principal: par90_principal,  count: loans.filter(l=>l.oldestOverdueDays>90).length  },
+                    { label:'PAR180', rate: par180_rate, principal: par180_principal, count: loans.filter(l=>l.oldestOverdueDays>180).length },
+                ].map((p,i) => `
+                <tr style="background:${i%2===0?'#f9f9f9':'white'}">
+                    <td style="padding:5px 10px;border:1px solid #999;font-weight:bold;color:#153505;">${p.label}</td>
+                    <td style="padding:5px 10px;border:1px solid #999;text-align:center;">&gt; ${[0,30,60,90,180][i]} days</td>
+                    <td style="padding:5px 10px;border:1px solid #999;text-align:right;">${p.count.toLocaleString()}</td>
+                    <td style="padding:5px 10px;border:1px solid #999;text-align:right;">${formatCurrency(p.principal)}</td>
+                    <td style="padding:5px 10px;border:1px solid #999;text-align:right;font-weight:bold;color:${p.rate>10?'#c0392b':p.rate>5?'#e67e22':'#27ae60'};">${p.rate.toFixed(2)}%</td>
+                </tr>`).join('')}
+                <tr style="background:#e8f5e8;font-weight:bold;">
+                    <td style="padding:5px 10px;border:1px solid #999;" colspan="2">Gross Loan Portfolio (denominator)</td>
+                    <td style="padding:5px 10px;border:1px solid #999;text-align:right;">${loans.length.toLocaleString()} loans</td>
+                    <td style="padding:5px 10px;border:1px solid #999;text-align:right;">${formatCurrency(glp)}</td>
+                    <td style="padding:5px 10px;border:1px solid #999;text-align:right;">100.00%</td>
+                </tr>
+            </table>
+
             <div class="action">
                 <span>Export table to:</span>
                 <button onclick="exportData('xlsx')">Excel (xlsx)</button>
                 <button onclick="exportData('xls')">Excel (xls)</button>
                 <button onclick="exportData('csv')">CSV</button>
             </div>
-            
+
             <table id="results-table">
                 <tr class="header-row">
                     <td>Sycamore Limited (MALAWI)</td>
@@ -658,50 +770,65 @@ function generatePrincipalBalancePARHTML(currentDate, loans, totalPortfolioPrinc
                     <td>Loan Officer</td>
                     <td>Relationship Supervisor</td>
                     <td>Branch</td>
-                    <td>RBM Loan Classification</td>
-                    <td>Principal Balance</td>
-                    <td>Total Arrears</td>
-                    <td>>=1 day</td>
-                    <td>Aged 0-7 days</td>
-                    <td>Aged 8-30 days</td>
-                    <td>Aged 31-60 days</td>
-                    <td>Aged 61-90 days</td>
-                    <td>Aged 91-120 days</td>
-                    <td>Aged 121-180 days</td>
-                    <td>Aged 181-366 days</td>
-                    <td>Aged 367+ days</td>
+                    <td>RBM Classification</td>
+                    <td>Unpaid Principal (MWK)</td>
+                    <td>Total Amount in Arrears (MWK)</td>
+                    <td>Total Principal at Risk (MWK)**</td>
+                    <td>0-7 days</td>
+                    <td>8-30 days</td>
+                    <td>31-60 days</td>
+                    <td>61-90 days</td>
+                    <td>91-120 days</td>
+                    <td>121-180 days</td>
+                    <td>181-366 days</td>
+                    <td>367+ days</td>
                 </tr>
                 ${loanRows}
                 <tr class="total-row">
                     <td colspan="8">TOTAL</td>
-                    <td style="text-align: right;">${formatCurrency(total_principal_balance)}</td>
-                    <td style="text-align: right;">${formatCurrency(total_arrears)}</td>
-                    <td style="text-align: right;">${formatCurrency(total_1_plus_days)}</td>
-                    <td style="text-align: right;">${formatCurrency(total_0_7_days)}</td>
-                    <td style="text-align: right;">${formatCurrency(total_8_30_days)}</td>
-                    <td style="text-align: right;">${formatCurrency(total_31_60_days)}</td>
-                    <td style="text-align: right;">${formatCurrency(total_61_90_days)}</td>
-                    <td style="text-align: right;">${formatCurrency(total_91_120_days)}</td>
-                    <td style="text-align: right;">${formatCurrency(total_121_180_days)}</td>
-                    <td style="text-align: right;">${formatCurrency(total_181_366_days)}</td>
-                    <td style="text-align: right;">${formatCurrency(total_367_plus_days)}</td>
+                    <td style="text-align:right;">${formatCurrency(total_principal_balance)}</td>
+                    <td style="text-align:right;">${formatCurrency(total_arrears)}</td>
+                    <td style="text-align:right;background:#fff3cd;font-weight:bold;">${formatCurrency(total_1_plus_days)}</td>
+                    <td style="text-align:right;">${formatCurrency(total_0_7_days)}</td>
+                    <td style="text-align:right;">${formatCurrency(total_8_30_days)}</td>
+                    <td style="text-align:right;">${formatCurrency(total_31_60_days)}</td>
+                    <td style="text-align:right;">${formatCurrency(total_61_90_days)}</td>
+                    <td style="text-align:right;">${formatCurrency(total_91_120_days)}</td>
+                    <td style="text-align:right;">${formatCurrency(total_121_180_days)}</td>
+                    <td style="text-align:right;">${formatCurrency(total_181_366_days)}</td>
+                    <td style="text-align:right;">${formatCurrency(total_367_plus_days)}</td>
+                </tr>
+                <tr style="background:#fff3cd;">
+                    <td colspan="8" style="font-style:italic;font-size:10px;">
+                        ** Total Principal at Risk = sum of all age buckets (0-7 + 8-30 + ... + 367+)
+                    </td>
+                    <td></td>
+                    <td></td>
+                    <td style="text-align:right;font-weight:bold;">${formatCurrency(total_1_plus_days)}</td>
+                    <td style="text-align:right;">${formatCurrency(total_0_7_days)}</td>
+                    <td style="text-align:right;">${formatCurrency(total_8_30_days)}</td>
+                    <td style="text-align:right;">${formatCurrency(total_31_60_days)}</td>
+                    <td style="text-align:right;">${formatCurrency(total_61_90_days)}</td>
+                    <td style="text-align:right;">${formatCurrency(total_91_120_days)}</td>
+                    <td style="text-align:right;">${formatCurrency(total_121_180_days)}</td>
+                    <td style="text-align:right;">${formatCurrency(total_181_366_days)}</td>
+                    <td style="text-align:right;">${formatCurrency(total_367_plus_days)}</td>
                 </tr>
                 <tr><td colspan="18" style="height: 10px;"></td></tr>
                 <tr class="total-row">
-                    <td>TOTAL PORTFOLIO PRINCIPAL</td>
+                    <td>GROSS LOAN PORTFOLIO</td>
                     <td></td>
                     <td></td>
                     <td></td>
-                    <td style="text-align: right;">MK${formatCurrency(totalPortfolioPrincipal)}</td>
+                    <td style="text-align: right;">MK${formatCurrency(glp)}</td>
                     <td colspan="12"></td>
                 </tr>
                 <tr class="total-row">
-                    <td>PORTFOLIO AT RISK %</td>
+                    <td>BUCKET % OF PORTFOLIO</td>
                     <td></td>
                     <td></td>
                     <td></td>
                     <td style="text-align: right;">${formatPercentage(100)}</td>
-                    <td style="text-align: right;">${formatPercentage(par_arrears_percent)}</td>
                     <td style="text-align: right;">${formatPercentage(par_1_plus_percent)}</td>
                     <td style="text-align: right;">${formatPercentage(par_0_7_percent)}</td>
                     <td style="text-align: right;">${formatPercentage(par_8_30_percent)}</td>
@@ -712,22 +839,59 @@ function generatePrincipalBalancePARHTML(currentDate, loans, totalPortfolioPrinc
                     <td style="text-align: right;">${formatPercentage(par_181_366_percent)}</td>
                     <td style="text-align: right;">${formatPercentage(par_367_plus_percent)}</td>
                 </tr>
-                <tr><td colspan="18" style="height: 10px;"></td></tr>
+                <tr class="total-row">
+                    <td>PAR1  (&gt;0 days)</td><td></td><td></td>
+                    <td style="text-align:right;">${formatCurrency(par1_principal)}</td>
+                    <td style="text-align:right;font-weight:bold;color:${par1_rate>10?'#c0392b':par1_rate>5?'#e67e22':'#27ae60'};">${par1_rate.toFixed(2)}%</td>
+                    <td colspan="12"></td>
+                </tr>
+                <tr class="total-row">
+                    <td>PAR30 (&gt;30 days)</td><td></td><td></td>
+                    <td style="text-align:right;">${formatCurrency(par30_principal)}</td>
+                    <td style="text-align:right;font-weight:bold;color:${par30_rate>10?'#c0392b':par30_rate>5?'#e67e22':'#27ae60'};">${par30_rate.toFixed(2)}%</td>
+                    <td colspan="12"></td>
+                </tr>
+                <tr class="total-row">
+                    <td>PAR60 (&gt;60 days)</td><td></td><td></td>
+                    <td style="text-align:right;">${formatCurrency(par60_principal)}</td>
+                    <td style="text-align:right;font-weight:bold;color:${par60_rate>10?'#c0392b':par60_rate>5?'#e67e22':'#27ae60'};">${par60_rate.toFixed(2)}%</td>
+                    <td colspan="12"></td>
+                </tr>
+                <tr class="total-row">
+                    <td>PAR90 (&gt;90 days)</td><td></td><td></td>
+                    <td style="text-align:right;">${formatCurrency(par90_principal)}</td>
+                    <td style="text-align:right;font-weight:bold;color:${par90_rate>10?'#c0392b':par90_rate>5?'#e67e22':'#27ae60'};">${par90_rate.toFixed(2)}%</td>
+                    <td colspan="12"></td>
+                </tr>
+                <tr class="total-row">
+                    <td>PAR180 (&gt;180 days)</td><td></td><td></td>
+                    <td style="text-align:right;">${formatCurrency(par180_principal)}</td>
+                    <td style="text-align:right;font-weight:bold;color:${par180_rate>10?'#c0392b':par180_rate>5?'#e67e22':'#27ae60'};">${par180_rate.toFixed(2)}%</td>
+                    <td colspan="12"></td>
+                </tr>
+                <tr><td colspan="19" style="height:10px;"></td></tr>
+                <tr style="background:#f5f5f5;font-size:10px;font-style:italic;">
+                    <td colspan="19" style="padding:4px 6px;">
+                        * Total Amount in Arrears = unpaid portion of all past-due installments (principal + charges). &nbsp;
+                        ** Total Principal at Risk = the loan's entire unpaid principal once any payment is overdue = sum of all age bucket columns.
+                    </td>
+                </tr>
+                <tr><td colspan="19" style="height:6px;"></td></tr>
                 <tr class="total-row">
                     <td>AGING SUMMARY</td>
                     <td></td>
                     <td></td>
                     <td></td>
-                    <td>% of Total</td>
-                    <td>Total Arrears</td>
-                    <td>>=1 day</td>
-                    <td>0 to 7</td>
-                    <td>8 to 30</td>
-                    <td>31 to 60</td>
-                    <td>61 to 90</td>
-                    <td>91 to 120</td>
-                    <td>121 to 180</td>
-                    <td>181 to 366</td>
+                    <td>% of GLP</td>
+                    <td>Total Amount in Arrears</td>
+                    <td>Total Principal at Risk</td>
+                    <td>0-7 days</td>
+                    <td>8-30 days</td>
+                    <td>31-60 days</td>
+                    <td>61-90 days</td>
+                    <td>91-120 days</td>
+                    <td>121-180 days</td>
+                    <td>181-366 days</td>
                     <td>367+ days</td>
                 </tr>
             </table>

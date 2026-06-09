@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const util = require('util')
 const { query, getConnection } = require('./databaseHelpers');
