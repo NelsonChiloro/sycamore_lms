@@ -177,6 +177,7 @@ $imgg = 'data:image;base64,'.base64_encode(file_get_contents($linkk))
 				<th>Loan Amount Total</th>
 				<th>Loan Status</th>
                 <th>Branch</th>
+                <th>RBM Loan Classification</th>
 				<th>Loan Added Date</th>
 
 			</tr>
@@ -187,18 +188,8 @@ $imgg = 'data:image;base64,'.base64_encode(file_get_contents($linkk))
 
 			foreach ($loan_data as $loan)
             {
-
-                if($loan->customer_type=='group'){
-                    $group = $this->Groups_model->get_by_id($loan->loan_customer);
-
-                    $customer_name = $group->group_name.'('.$group->group_code.')';
-                    $preview_url = "Customer_groups/members/";
-                }elseif($loan->customer_type=='individual'){
-                    $indi = $this->Individual_customers_model->get_by_id($loan->loan_customer);
-                    $customer_name = $indi->Firstname.' '.$indi->Lastname;
-                    $preview_url = "Individual_customers/view/";
-                }
-				$branch = get_by_id('branches','id',$loan->branch);
+                $preview_url = ($loan->customer_type == 'group') ? 'Customer_groups/members/' : 'Individual_customers/view/';
+                $customer_name = !empty($loan->customer_display_name) ? $loan->customer_display_name : (!empty($loan->customer_nam) ? $loan->customer_nam : 'Unknown');
             ?>
             <tr>
 
@@ -214,7 +205,8 @@ $imgg = 'data:image;base64,'.base64_encode(file_get_contents($linkk))
 					<td><?php echo $loan->efname." ".$loan->elname ?></td>
 					<td>MK<?php echo number_format($loan->loan_amount_total,2) ?></td>
 					<td><?php echo $loan->loan_status ?></td>
-				<td><?php echo $branch ? $branch->BranchName : 'N/A'; ?></td>
+				<td><?php echo !empty($loan->branch_display_name) ? htmlspecialchars($loan->branch_display_name) : 'N/A'; ?></td>
+					<td><?php echo !empty($loan->rbm_classification) ? htmlspecialchars($loan->rbm_classification) : 'Standard'; ?></td>
 					<td><?php echo $loan->loan_added_date ?></td>
 
 				</tr>

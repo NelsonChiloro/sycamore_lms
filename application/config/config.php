@@ -24,8 +24,7 @@ defined('BASEPATH') OR exit('No direct script access allowed');
 | a PHP script and you can easily do that on your own.
 |
 */
-$config['base_url'] = 'http://localhost/sycamore/';
-
+$config['base_url'] = 'http://localhost/public_html/';
 /*
 |--------------------------------------------------------------------------
 | Report Service Base URL
@@ -35,7 +34,7 @@ $config['base_url'] = 'http://localhost/sycamore/';
 | Set REPORT_SERVICE_BASE_URL in the environment to override this value.
 |
 */
-$config['report_service_base_url'] = getenv('REPORT_SERVICE_BASE_URL') ?: 'http://localhost:4300';
+$config['report_service_base_url'] = getenv('REPORT_SERVICE_BASE_URL') ?: 'http://localhost:4500';
 
 /*
 |--------------------------------------------------------------------------

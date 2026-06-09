@@ -1,5 +1,12 @@
 // loanPortfolioReport.js - With detailed performance logging
-const { query } = require('./databaseHelpers');
+const {
+    query,
+    sqlBranchJoin,
+    determineRBMClassification,
+    buildReportSupervisorContext,
+    appendOfficerOrSupervisorLoanFilter,
+    sqlRelationshipSupervisorNameExpr
+} = require('./databaseHelpers');
 const moment = require('moment');
 const util = require('util');
 
@@ -22,7 +29,9 @@ function logStage(stageName, startTime = null) {
  * Generate loan portfolio report with detailed performance logging
  */
 async function generateLoanPortfolioReport(options, reportId, reportTrackers) {
-    const { user, branch, branchgp, product, status, from, to } = options;
+    const { user, branch, branchgp, product, status, from, to, supervisor } = options;
+    const asOfDate = to ? formatDate(to) : moment().format('YYYY-MM-DD');
+    const supCtx = await buildReportSupervisorContext({ supervisor, user });
 
     const overallStart = logStage('LOAN PORTFOLIO REPORT GENERATION');
 
@@ -32,6 +41,7 @@ async function generateLoanPortfolioReport(options, reportId, reportTrackers) {
     console.log(`   - Product: ${product}`);
     console.log(`   - Status: ${status}`);
     console.log(`   - Date Range: ${from} to ${to}`);
+    console.log(`   - Balance As Of: ${asOfDate}`);
     console.log('');
 
     try {
@@ -70,29 +80,37 @@ async function generateLoanPortfolioReport(options, reportId, reportTrackers) {
                 ic.SourceOfIncome,
                 ic.GrossMonthlyIncome,
                 CONCAT(COALESCE(e.Firstname, ''), ' ', COALESCE(e.Lastname, '')) as loan_officer,
+                ${sqlRelationshipSupervisorNameExpr('rel_sup')} AS relationship_supervisor,
                 COALESCE(b.BranchName, 'Unknown Branch') as branch_name,
                 loan.customer_type
             FROM loan
             LEFT JOIN loan_products ON loan_products.loan_product_id = loan.loan_product
             LEFT JOIN employees e ON e.id = loan.loan_added_by
+            LEFT JOIN employees rel_sup ON rel_sup.id = e.Supervisor
             LEFT JOIN individual_customers ic ON loan.loan_customer = ic.id AND loan.customer_type = 'individual'
             LEFT JOIN \`groups\` g ON loan.loan_customer = g.group_id AND loan.customer_type = 'group'
-            LEFT JOIN branches b ON loan.branch = b.id
+            ${sqlBranchJoin('loan', 'b')}
             WHERE loan.loan_status IN ('ACTIVE', 'CLOSED', 'WRITTEN_OFF')
         `;
 
         // Add filters
         let filterCount = 0;
         if (branch !== 'All') {
-            sql += ` AND loan.branch = '${branch}'`;
+            const branchEsc = String(branch).replace(/'/g, "''");
+            sql += ` AND (
+                loan.branch = '${branchEsc}'
+                OR loan.branch IN (SELECT Code FROM branches WHERE id = '${branchEsc}')
+                OR loan.branch IN (SELECT BranchCode FROM branches WHERE id = '${branchEsc}')
+            )`;
             filterCount++;
         }
         if (status !== 'All') {
             sql += ` AND loan.loan_status = '${status}'`;
             filterCount++;
         }
-        if (user !== 'All') {
-            sql += ` AND loan.loan_added_by = '${user}'`;
+        const sqlBeforeOfficer = sql;
+        sql = appendOfficerOrSupervisorLoanFilter(sql, { ...supCtx, user }, 'loan', 'user');
+        if (sql !== sqlBeforeOfficer) {
             filterCount++;
         }
         if (product !== 'All') {
@@ -100,7 +118,13 @@ async function generateLoanPortfolioReport(options, reportId, reportTrackers) {
             filterCount++;
         }
         if (from && to) {
-            sql += ` AND loan.loan_added_date BETWEEN '${formatDate(from)}' AND '${formatDate(to)}'`;
+            sql += ` AND DATE(loan.loan_added_date) BETWEEN '${formatDate(from)}' AND '${formatDate(to)}'`;
+            filterCount++;
+        } else if (from) {
+            sql += ` AND DATE(loan.loan_added_date) >= '${formatDate(from)}'`;
+            filterCount++;
+        } else if (to) {
+            sql += ` AND DATE(loan.loan_added_date) <= '${formatDate(to)}'`;
             filterCount++;
         }
 
@@ -136,19 +160,25 @@ async function generateLoanPortfolioReport(options, reportId, reportTrackers) {
         // Stage 5: Payment Schedules Batch Query
         stageStart = logStage('Payment Schedules Batch Query');
         const paymentSchedulesQuery = `
-            SELECT 
+            SELECT
                 loan_id,
-                SUM(CASE WHEN payment_schedule <= CURDATE() THEN amount ELSE 0 END) as total_expected_installments,
-                SUM(paid_amount) as actual_payments,
-                SUM(CASE WHEN payment_schedule < CURDATE() AND status != 'PAID' THEN (amount - paid_amount) ELSE 0 END) as amount_in_arrears,
-                MIN(CASE WHEN payment_schedule < CURDATE() AND status != 'PAID' THEN DATEDIFF(CURDATE(), payment_schedule) ELSE NULL END) as days_in_arrears,
+                -- Gross Loan Portfolio: all unpaid principal regardless of schedule date
+                SUM(CASE WHEN status != 'PAID' THEN COALESCE(principal, 0) ELSE 0 END) as gross_loan_portfolio,
+                -- Outstanding Balance: unpaid principal + accrued charges (charges earned up to end of as-of month)
+                SUM(CASE WHEN status != 'PAID' THEN COALESCE(principal, 0) ELSE 0 END)
+                    + SUM(CASE WHEN status != 'PAID' AND payment_schedule <= LAST_DAY(DATE(?))
+                               THEN COALESCE(amount, 0) - COALESCE(principal, 0) ELSE 0 END) as outstanding_balance,
+                SUM(CASE WHEN payment_schedule <= DATE(?) THEN amount ELSE 0 END) as total_expected_installments,
+                SUM(CASE WHEN payment_schedule <= DATE(?) THEN paid_amount ELSE 0 END) as actual_payments,
+                SUM(CASE WHEN payment_schedule < DATE(?) AND status != 'PAID' THEN (amount - paid_amount) ELSE 0 END) as amount_in_arrears,
+                MAX(CASE WHEN payment_schedule < DATE(?) AND status != 'PAID' THEN DATEDIFF(DATE(?), payment_schedule) ELSE 0 END) as days_in_arrears,
                 MAX(payment_schedule) as maturity_date
             FROM payement_schedules
             WHERE loan_id IN (${loanIds.join(',')})
             GROUP BY loan_id
         `;
 
-        const paymentData = await query(paymentSchedulesQuery);
+        const paymentData = await query(paymentSchedulesQuery, [asOfDate, asOfDate, asOfDate, asOfDate, asOfDate, asOfDate]);
         const paymentMap = {};
         paymentData.forEach(p => {
             paymentMap[p.loan_id] = p;
@@ -234,17 +264,17 @@ async function generateLoanPortfolioReport(options, reportId, reportTrackers) {
             const paymentInfo = paymentMap[loan.loan_id] || {};
 
             // Assign calculated values
+            loan.gross_loan_portfolio = parseFloat(paymentInfo.gross_loan_portfolio || 0);
+            loan.outstanding_balance = parseFloat(paymentInfo.outstanding_balance || 0);
             loan.total_expected_installments = parseFloat(paymentInfo.total_expected_installments || 0);
             loan.actual_payments = parseFloat(paymentInfo.actual_payments || 0);
             loan.amount_in_arrears = parseFloat(paymentInfo.amount_in_arrears || 0);
             loan.days_in_arrears = parseInt(paymentInfo.days_in_arrears || 0);
+            loan.rbm_classification = determineRBMClassification(loan.days_in_arrears);
             loan.maturity_date = paymentInfo.maturity_date;
             loan.last_credit_date = lastPaymentMap[loan.loan_number];
             loan.collateral_value = parseFloat(collateralMap[loan.loan_id] || 0);
             loan.cycle = cycleMap[loan.loan_id] || 1;
-
-            // Calculate outstanding balance
-            loan.outstanding_balance = parseFloat(loan.loan_amount_total || 0) - parseFloat(loan.actual_payments || 0);
 
             processedCount++;
 
@@ -312,13 +342,27 @@ function formatDisplayDate(date) {
 function generateHTML(loanData) {
     const htmlStart = Date.now();
 
+    // Compute portfolio totals for the summary section
+    const totalsForSummary = loanData.reduce((acc, loan) => ({
+        grossLoanPortfolio: acc.grossLoanPortfolio + parseFloat(loan.gross_loan_portfolio || 0),
+        outstandingBalance: acc.outstandingBalance + parseFloat(loan.outstanding_balance || 0),
+        amountInArrears:    acc.amountInArrears    + parseFloat(loan.amount_in_arrears   || 0),
+        actualPayments:     acc.actualPayments     + parseFloat(loan.actual_payments      || 0),
+        expectedInstallments: acc.expectedInstallments + parseFloat(loan.total_expected_installments || 0),
+        collateral:         acc.collateral         + parseFloat(loan.collateral_value     || 0),
+    }), { grossLoanPortfolio: 0, outstandingBalance: 0, amountInArrears: 0, actualPayments: 0, expectedInstallments: 0, collateral: 0 });
+
+    const summaryCollectionRate = totalsForSummary.expectedInstallments > 0
+        ? ((totalsForSummary.actualPayments / totalsForSummary.expectedInstallments) * 100).toFixed(2)
+        : '0.00';
+
     let html = `
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Loan Portfolio Report - Performance Optimized</title>
+        <title>Detailed Portfolio Report</title>
         <style>
             body { font-family: Arial, sans-serif; margin: 0; padding: 10px; }
             table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -331,47 +375,75 @@ function generateHTML(loanData) {
             .text-right { text-align: right; }
             .text-center { text-align: center; }
             h1 { color: #153505; }
-            .performance-info { background-color: #e8f5e8; padding: 10px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #153505; }
-            .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 15px; }
-            .stat-item { background: white; padding: 10px; border-radius: 3px; text-align: center; border: 1px solid #ddd; }
+            .summary-section { background-color: #e8f5e8; padding: 15px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #153505; }
+            .summary-section h3 { margin: 0 0 12px 0; color: #153505; }
+            .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+            .summary-card { background: white; padding: 12px; border-radius: 4px; text-align: center; border: 1px solid #c8e6c9; }
+            .summary-card .label { font-size: 11px; color: #555; margin-bottom: 4px; }
+            .summary-card .value { font-size: 15px; font-weight: bold; color: #153505; }
+            .summary-card .sub { font-size: 10px; color: #888; margin-top: 2px; }
         </style>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
         <script>
             function exportData(type) {
-                const fileName = 'loan_portfolio_report_optimized.' + type;
-                const table = document.getElementById("data-table"); 
+                const fileName = 'detailed_portfolio_report.' + type;
+                const table = document.getElementById("data-table");
                 const wb = XLSX.utils.table_to_book(table);
                 XLSX.writeFile(wb, fileName);
             }
         </script>
     </head>
     <body>
-        <h1>Loan Portfolio Report</h1>
-        <div class="performance-info">
-            <h3>📊 Report Statistics</h3>
-            <div class="stats">
-                <div class="stat-item">
-                    <strong>Total Loans</strong><br>
-                    ${loanData.length}
+        <h1>Detailed Portfolio Report</h1>
+
+        <div class="summary-section">
+            <h3>Portfolio Summary</h3>
+            <div class="summary-grid">
+                <div class="summary-card">
+                    <div class="label">Total Loans</div>
+                    <div class="value">${loanData.length.toLocaleString()}</div>
+                    <div class="sub">Active &amp; Closed</div>
                 </div>
-                <div class="stat-item">
-                    <strong>Report Generated</strong><br>
-                    ${moment().format('YYYY-MM-DD HH:mm:ss')}
+                <div class="summary-card">
+                    <div class="label">Gross Loan Portfolio</div>
+                    <div class="value">MWK ${formatNumber(totalsForSummary.grossLoanPortfolio)}</div>
+                    <div class="sub">Total unpaid principal</div>
                 </div>
-                <div class="stat-item">
-                    <strong>Performance</strong><br>
-                    Optimized (5 batch queries)
+                <div class="summary-card">
+                    <div class="label">Outstanding Loan Balance</div>
+                    <div class="value">MWK ${formatNumber(totalsForSummary.outstandingBalance)}</div>
+                    <div class="sub">Principal + accrued charges (earned)</div>
+                </div>
+                <div class="summary-card">
+                    <div class="label">Amount in Arrears</div>
+                    <div class="value">MWK ${formatNumber(totalsForSummary.amountInArrears)}</div>
+                    <div class="sub">Overdue amounts</div>
+                </div>
+                <div class="summary-card">
+                    <div class="label">Total Actual Payments</div>
+                    <div class="value">MWK ${formatNumber(totalsForSummary.actualPayments)}</div>
+                    <div class="sub">Collected to date</div>
+                </div>
+                <div class="summary-card">
+                    <div class="label">Collection Rate</div>
+                    <div class="value">${summaryCollectionRate}%</div>
+                    <div class="sub">Actual vs expected</div>
+                </div>
+                <div class="summary-card">
+                    <div class="label">Report Generated</div>
+                    <div class="value" style="font-size:12px">${moment().format('YYYY-MM-DD HH:mm')}</div>
+                    <div class="sub">&nbsp;</div>
                 </div>
             </div>
         </div>
-        
+
         <div class="action">
             <span>Export table to:</span>
             <button onclick="exportData('xlsx')">Excel (xlsx)</button>
             <button onclick="exportData('xls')">Excel (xls)</button>
             <button onclick="exportData('csv')">CSV</button>
         </div>
-        
+
         <table id="data-table">
             <thead>
                 <tr>
@@ -388,9 +460,11 @@ function generateHTML(loanData) {
                     <th>Interest Rate</th>
                     <th>Total Amount (MWK)</th>
                     <th>Installment (MWK)</th>
-                    <th>Outstanding (MWK)</th>
+                    <th>Gross Loan Portfolio (MWK)</th>
+                    <th>Outstanding Balance (MWK)</th>
                     <th>Amount in Arrears (MWK)</th>
                     <th>Days in Arrears</th>
+                    <th>RBM Loan Classification</th>
                     <th>Last Payment Date</th>
                     <th>Collateral Value (MWK)</th>
                     <th>Maturity Date</th>
@@ -399,6 +473,7 @@ function generateHTML(loanData) {
                     <th>Collection Rate (%)</th>
                     <th>Status</th>
                     <th>Loan Officer</th>
+                    <th>Relationship Supervisor</th>
                     <th>Date Added</th>
                 </tr>
             </thead>
@@ -425,9 +500,11 @@ function generateHTML(loanData) {
                     <td class="text-center">${loan.loan_interest}%</td>
                     <td class="text-right">${formatNumber(loan.loan_amount_total)}</td>
                     <td class="text-right">${formatNumber(loan.loan_amount_term)}</td>
+                    <td class="text-right">${formatNumber(loan.gross_loan_portfolio)}</td>
                     <td class="text-right">${formatNumber(loan.outstanding_balance)}</td>
                     <td class="text-right">${formatNumber(loan.amount_in_arrears)}</td>
                     <td class="text-center">${loan.days_in_arrears}</td>
+                    <td>${loan.rbm_classification || 'Standard'}</td>
                     <td>${formatDisplayDate(loan.last_credit_date)}</td>
                     <td class="text-right">${formatNumber(loan.collateral_value)}</td>
                     <td>${formatDisplayDate(loan.maturity_date)}</td>
@@ -436,6 +513,7 @@ function generateHTML(loanData) {
                     <td class="text-right">${collectionRate}%</td>
                     <td>${loan.loan_status}</td>
                     <td>${loan.loan_officer}</td>
+                    <td>${loan.relationship_supervisor || 'N/A'}</td>
                     <td>${formatDisplayDate(loan.loan_added_date)}</td>
                 </tr>`;
     });
@@ -444,31 +522,47 @@ function generateHTML(loanData) {
     const totals = loanData.reduce((acc, loan) => ({
         principal: acc.principal + parseFloat(loan.loan_principal || 0),
         total_amount: acc.total_amount + parseFloat(loan.loan_amount_total || 0),
+        installment_amount: acc.installment_amount + parseFloat(loan.loan_amount_term || 0),
+        gross_loan_portfolio: acc.gross_loan_portfolio + parseFloat(loan.gross_loan_portfolio || 0),
         outstanding: acc.outstanding + parseFloat(loan.outstanding_balance || 0),
         arrears: acc.arrears + parseFloat(loan.amount_in_arrears || 0),
         collateral: acc.collateral + parseFloat(loan.collateral_value || 0),
         expected: acc.expected + parseFloat(loan.total_expected_installments || 0),
         actual: acc.actual + parseFloat(loan.actual_payments || 0)
-    }), { principal: 0, total_amount: 0, outstanding: 0, arrears: 0, collateral: 0, expected: 0, actual: 0 });
+    }), { principal: 0, total_amount: 0, installment_amount: 0, gross_loan_portfolio: 0, outstanding: 0, arrears: 0, collateral: 0, expected: 0, actual: 0 });
 
     const overallCollectionRate = totals.expected > 0 ? ((totals.actual / totals.expected) * 100).toFixed(2) : '0.00';
 
     html += `
                 <tr style="font-weight: bold; background-color: #e8f5e8;">
-                    <td colspan="7">TOTALS:</td>
-                    <td class="text-right">${formatNumber(totals.principal)}</td>
-                    <td colspan="2"></td>
-                    <td class="text-right">${formatNumber(totals.total_amount)}</td>
+                    <td>TOTALS:</td>
                     <td></td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                    <td class="text-right">${formatNumber(totals.principal)}</td>
+                    <td></td>
+                    <td></td>
+                    <td class="text-right">${formatNumber(totals.total_amount)}</td>
+                    <td class="text-right">${formatNumber(totals.installment_amount)}</td>
+                    <td class="text-right">${formatNumber(totals.gross_loan_portfolio)}</td>
                     <td class="text-right">${formatNumber(totals.outstanding)}</td>
                     <td class="text-right">${formatNumber(totals.arrears)}</td>
-                    <td colspan="2"></td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
                     <td class="text-right">${formatNumber(totals.collateral)}</td>
                     <td></td>
                     <td class="text-right">${formatNumber(totals.expected)}</td>
                     <td class="text-right">${formatNumber(totals.actual)}</td>
                     <td class="text-right">${overallCollectionRate}%</td>
-                    <td colspan="3"></td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
                 </tr>
             </tbody>
         </table>

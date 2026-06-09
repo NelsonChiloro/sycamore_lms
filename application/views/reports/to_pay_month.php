@@ -37,9 +37,11 @@ $products = get_all('loan');
 				<tbody>
 				<?php
 				$n = 1;
+				$totals = 0;
 
 				foreach ($loan_data as $loan)
 				{
+                    $totals += $loan->amount;
                     if($loan->customer_type=='group'){
                         $group = $this->Groups_model->get_by_id($loan->loan_customer);
 
@@ -54,7 +56,7 @@ $products = get_all('loan');
 					<tr>
 
 						<td><?php echo $n ?></td>
-                        <td><a href="<?php echo base_url($preview_url).$loan->loan_customer?>""><?php echo $customer_name?></a></td>
+                        <td><a href="<?php echo base_url($preview_url).$loan->loan_customer?>"><?php echo $customer_name?></a></td>
 						<td><?php echo isset($loan->customer_group_name) ? $loan->customer_group_name : 'N/A' ?></td>
 
 						<td><a href="<?php echo base_url('loan/view/').$loan->loan_id?>"><?php echo $loan->loan_number ?></a></td>
@@ -72,6 +74,15 @@ $products = get_all('loan');
 				}
 				?>
 				</tbody>
+				<tfoot>
+				<tr>
+					<th colspan="5" style="text-align:right;">Total</th>
+					<th class="collection-total-cell">MK<?php echo number_format($totals, 2); ?></th>
+					<th></th>
+					<th></th>
+					<th></th>
+				</tr>
+				</tfoot>
 			</table>
 		</div>
 	</div>

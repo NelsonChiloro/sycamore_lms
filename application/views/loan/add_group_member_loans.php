@@ -1,5 +1,10 @@
 <?php
-$loan_types = $this->Loan_products_model->get_all();
+if (!isset($loan_types) || !is_array($loan_types)) {
+    $loan_types = array();
+}
+if (!isset($branches) || !is_array($branches)) {
+    $branches = function_exists('get_all') ? get_all('branches') : array();
+}
 ?>
 
 <div class="main-content">
@@ -44,6 +49,20 @@ $loan_types = $this->Loan_products_model->get_all();
                                             <?php
                                             }
                                             ?>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div class="form-group row">
+                                    <label class="col-sm-3 col-form-label">Branch:</label>
+                                    <div class="col-sm-9">
+                                        <select name="branch_id" class="form-control select2" required>
+                                            <option value="">--select branch--</option>
+                                            <?php foreach ($branches as $branch) { ?>
+                                                <option value="<?php echo $branch->id; ?>" <?php echo set_select('branch_id', $branch->id); ?>>
+                                                    <?php echo htmlspecialchars($branch->BranchName . ' (' . $branch->Code . ')'); ?>
+                                                </option>
+                                            <?php } ?>
                                         </select>
                                     </div>
                                 </div>
@@ -105,7 +124,7 @@ $loan_types = $this->Loan_products_model->get_all();
                                                 <span class="input-group-text">months</span>
                                             </div>
                                         </div>
-                                        <small class="form-text text-muted">This loan term will apply to all group members</small>
+                                        <small class="form-text text-muted period-hint">This loan term will apply to all group members</small>
                                     </div>
                                 </div>
                                 
@@ -285,3 +304,43 @@ $loan_types = $this->Loan_products_model->get_all();
         border-color: #ced4da;
     }
 </style>
+
+<script>
+$(document).ready(function () {
+    var GL_MONTHLY_CODES = ['ZTGLBT', 'ZTGLLL'];
+
+    function getProductCode($select) {
+        var m = $select.find('option:selected').text().match(/\(([^:]+):/);
+        return m ? $.trim(m[1]) : '';
+    }
+
+    function isGroupZitsambaMonthly(optionText, code) {
+        var text = (optionText || '').toUpperCase();
+        return GL_MONTHLY_CODES.indexOf((code || '').toUpperCase()) !== -1
+            || (text.indexOf('GROUP LOAN PRODUCT') !== -1
+                && text.indexOf('ZITSAMBA') !== -1
+                && (text.indexOf(' LL') !== -1 || text.indexOf(' BT') !== -1));
+    }
+
+    function enforcePeriodLimit() {
+        var $period   = $('input[name="loan_period"]');
+        var $select   = $('select[name="loan_type"]');
+        var code      = getProductCode($select);
+        var optionTxt = $select.find('option:selected').text();
+        var $hint     = $period.closest('.form-group').find('.period-hint');
+        if (isGroupZitsambaMonthly(optionTxt, code)) {
+            $period.attr('max', 4);
+            if (parseInt($period.val()) > 4) { $period.val(4); }
+            $hint.html('<i class="fas fa-exclamation-triangle"></i> Maximum 4 months for Group Loan Product &ndash; Zitsamba.')
+                 .removeClass('text-muted').addClass('text-warning font-weight-bold');
+        } else {
+            $period.attr('max', 120);
+            $hint.text('This loan term will apply to all group members')
+                 .removeClass('text-warning font-weight-bold').addClass('text-muted');
+        }
+    }
+
+    $('select[name="loan_type"]').on('change', enforcePeriodLimit);
+    enforcePeriodLimit();
+});
+</script>

@@ -159,7 +159,7 @@
                         <th>Client Name</th>
                         <th>Product</th>
                         <th>Status</th>
-                        <th>RBM Classification</th>
+                        <th>RBM Loan Classification</th>
                         <th>Risk Officer</th>
                         <th>Loan Balance</th>
                         <th>Principal Balance</th>

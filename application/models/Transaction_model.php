@@ -30,6 +30,45 @@ class Transaction_model extends CI_Model
         $this->db->order_by('transaction.system_time', 'DESC');
         return $this->db->get()->result();
     }
+
+    /**
+     * Loan account transactions for a set of loan numbers (batch statement).
+     *
+     * @param array $loan_numbers
+     * @param array $filters from, to, loan_number, loan_id
+     * @return array
+     */
+    function get_batch_loan_transactions(array $loan_numbers, array $filters = array())
+    {
+        $loan_numbers = array_values(array_filter(array_map('trim', $loan_numbers)));
+        if (empty($loan_numbers)) {
+            return array();
+        }
+
+        $this->db->select('transaction.*, loan.loan_id')
+            ->from($this->table)
+            ->join('loan', 'loan.loan_number = transaction.account_number', 'inner')
+            ->where_in('transaction.account_number', $loan_numbers)
+            ->where('transaction.transaction_type !=', 'other');
+
+        if (!empty($filters['from'])) {
+            $this->db->where('DATE(transaction.system_time) >=', $filters['from']);
+        }
+        if (!empty($filters['to'])) {
+            $this->db->where('DATE(transaction.system_time) <=', $filters['to']);
+        }
+        if (!empty($filters['loan_number'])) {
+            $this->db->like('transaction.account_number', $filters['loan_number']);
+        }
+        if (!empty($filters['loan_id'])) {
+            $this->db->where('loan.loan_id', (int) $filters['loan_id']);
+        }
+
+        $this->db->order_by('transaction.system_time', 'DESC');
+        $this->db->order_by('transaction.account_number', 'ASC');
+
+        return $this->db->get()->result();
+    }
     // get all
     function get_all()
     {

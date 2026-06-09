@@ -58,7 +58,7 @@ class Arrears_report extends CI_Controller {
         $url = report_service_url('generate-report-arrears');
 
         // Prepare the data to be sent
-        $data = [
+        $data = array_merge([
             "report_type" => "Arrears Report",
             "user" => $this->session->userdata('Firstname')." ".$this->session->userdata('Lastname'),
             "user_id" => $this->session->userdata('user_id'),
@@ -68,7 +68,7 @@ class Arrears_report extends CI_Controller {
             "officer_name" => $officer_name,
             "branch_id" => $branch_id,
             "branch_name" => $branch_name
-        ];
+        ], report_supervisor_curl_payload());
 
         // Convert the data array to JSON
         $jsonData = json_encode($data);
@@ -131,7 +131,12 @@ class Arrears_report extends CI_Controller {
 
         $this->db->from('loan l');
         $this->db->join('payement_schedules ps', 'ps.loan_id = l.loan_id', 'left');
-        $this->db->join('branches', 'branches.id = l.branch');
+        $this->db->join(
+            'branches',
+            'branches.id = l.branch OR branches.Code = l.branch OR branches.BranchCode = l.branch',
+            'left',
+            false
+        );
         $this->db->join('loan_products lp', 'lp.loan_product_id = l.loan_product');
         $this->db->join('individual_customers ic', 'l.loan_customer = ic.id AND l.customer_type = "individual"', 'left');
         $this->db->join('groups g', 'l.loan_customer = g.group_id AND l.customer_type = "group"', 'left');
@@ -148,7 +153,7 @@ class Arrears_report extends CI_Controller {
         }
         // Filter by branch if specified
         if (!empty($branch)) {
-            $this->db->where('l.branch', $branch);
+            report_apply_loan_branch_value_filter($branch, 'l');
         }
 
 

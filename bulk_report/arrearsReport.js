@@ -1,4 +1,12 @@
 const moment = require('moment');
+const {
+    determineRBMClassification,
+    getOfficerIdsUnderSupervisor,
+    sqlRelationshipSupervisorNameExpr,
+    sqlBranchJoin,
+    appendBranchFilter,
+    findBranch
+} = require('./databaseHelpers');
 
 /**
  * Generate Arrears Report HTML
@@ -12,6 +20,7 @@ async function generateArrearsReport(filterOptions, reportId, reportTrackers, db
     return new Promise(async (resolve, reject) => {
         try {
             console.log('Starting Arrears Report generation with filters:', filterOptions);
+            const asOfDate = filterOptions.end_date || moment().format('YYYY-MM-DD');
             
             // Initialize progress tracking
             reportTrackers[reportId].percentage = 5;
@@ -34,38 +43,62 @@ async function generateArrearsReport(filterOptions, reportId, reportTrackers, db
                     b.BranchName,
                     e.Firstname as officer_firstname,
                     e.Lastname as officer_lastname,
-                    ps.interest + ps.padmin_fee + ps.ploan_cover as loan_charges,
-                    MAX(ps.payment_schedule) as due_date,
-                    SUM(CASE WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE() THEN 1 ELSE 0 END) as num_missed_payments,
-                    SUM(CASE WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE() THEN (ps.amount - ps.paid_amount) ELSE 0 END) as total_arrears,
+                    ${sqlRelationshipSupervisorNameExpr('rel_sup')} as relationship_supervisor,
+                    SUM(CASE
+                        WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < DATE(?)
+                            THEN GREATEST(
+                                (COALESCE(ps.interest, 0) + COALESCE(ps.padmin_fee, 0) + COALESCE(ps.ploan_cover, 0)) - COALESCE(ps.paid_amount, 0),
+                                0
+                            )
+                        ELSE 0
+                    END) as loan_charges,
+                    MIN(CASE
+                        WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < DATE(?)
+                            THEN ps.payment_schedule
+                        ELSE NULL
+                    END) as due_date,
+                    SUM(CASE WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < DATE(?) THEN 1 ELSE 0 END) as num_missed_payments,
+                    SUM(CASE WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < DATE(?) THEN (ps.amount - ps.paid_amount) ELSE 0 END) as total_arrears,
                     MAX(ps.paid_date) as last_transaction_date,
-                    DATEDIFF(CURDATE(), MIN(CASE WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE() THEN ps.payment_schedule ELSE NULL END)) as arrear_days
+                    DATEDIFF(DATE(?), MIN(CASE WHEN ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < DATE(?) THEN ps.payment_schedule ELSE NULL END)) as arrear_days
                 FROM loan l
                 LEFT JOIN payement_schedules ps ON ps.loan_id = l.loan_id
                 LEFT JOIN loan_products lp ON lp.loan_product_id = l.loan_product
-                LEFT JOIN branches b ON b.id = l.branch
+                ${sqlBranchJoin('l', 'b')}
                 LEFT JOIN employees e ON e.id = l.loan_added_by
-                WHERE l.loan_status IN ('APPROVED', 'ACTIVE') 
-                AND l.disbursed = 'Yes'
+                LEFT JOIN employees rel_sup ON rel_sup.id = e.Supervisor
+                WHERE l.loan_status = 'ACTIVE'
             `;
 
-            let queryParams = [];
+            let queryParams = [asOfDate, asOfDate, asOfDate, asOfDate, asOfDate, asOfDate];
 
-            // Add filters - use disbursed_date when available (actual disbursement) else loan_date
-            if (filterOptions.start_date && filterOptions.end_date) {
-                query += ` AND COALESCE(DATE(l.disbursed_date), l.loan_date) BETWEEN ? AND ?`;
-                queryParams.push(filterOptions.start_date, filterOptions.end_date);
-            }
-
-            if (filterOptions.officer_id && filterOptions.officer_id !== 'All') {
+            if (filterOptions.supervisor && filterOptions.supervisor !== 'All') {
+                const officerIds = await getOfficerIdsUnderSupervisor(filterOptions.supervisor);
+                if (!officerIds.length) {
+                    query += ` AND 1=0`;
+                } else {
+                    query += ` AND l.loan_added_by IN (${officerIds.join(',')})`;
+                }
+            } else if (filterOptions.officer_id && filterOptions.officer_id !== 'All') {
                 query += ` AND l.loan_added_by = ?`;
                 queryParams.push(filterOptions.officer_id);
             }
 
-            if (filterOptions.branch_id && filterOptions.branch_id !== 'All') {
-                query += ` AND l.branch = ?`;
-                queryParams.push(filterOptions.branch_id);
+            // Add date filters - support full range and one-sided filtering
+            if (filterOptions.start_date && filterOptions.end_date) {
+                query += ` AND COALESCE(DATE(l.disbursed_date), l.loan_date) BETWEEN ? AND ?`;
+                queryParams.push(filterOptions.start_date, filterOptions.end_date);
+            } else if (filterOptions.start_date) {
+                query += ` AND COALESCE(DATE(l.disbursed_date), l.loan_date) >= ?`;
+                queryParams.push(filterOptions.start_date);
+            } else if (filterOptions.end_date) {
+                query += ` AND COALESCE(DATE(l.disbursed_date), l.loan_date) <= ?`;
+                queryParams.push(filterOptions.end_date);
             }
+
+            let branchWhere = '';
+            branchWhere = appendBranchFilter(branchWhere, queryParams, filterOptions.branch_id, 'l');
+            query += branchWhere;
 
             query += `
                 GROUP BY l.loan_id
@@ -179,12 +212,23 @@ async function generateArrearsHTML(loans, filterOptions, reportId, reportTracker
                 else lowRiskCount++;
             });
 
+            const totals = {
+                amountDisbursed: loans.reduce((sum, loan) => sum + parseFloat(loan.amount_disbursed || 0), 0),
+                loanCharges: loans.reduce((sum, loan) => sum + parseFloat(loan.loan_charges || 0), 0),
+                repaymentAmount: loans.reduce((sum, loan) => sum + parseFloat(loan.repayment_amount || 0), 0),
+                missedPayments: loans.reduce((sum, loan) => sum + parseInt(loan.num_missed_payments || 0, 10), 0),
+                totalArrears
+            };
+
             html += `
     <div class="summary">
         <h3>SUMMARY</h3>
         <table style="width: 50%; margin: 0;">
             <tr><td><strong>Total Loans in Arrears:</strong></td><td>${totalLoansCount}</td></tr>
             <tr><td><strong>Total Arrears Amount (MWK):</strong></td><td>${totalArrears.toLocaleString('en-US', {minimumFractionDigits: 2})}</td></tr>
+            <tr><td><strong>Total Amount Disbursed (MWK) in Arrears:</strong></td><td>${totals.amountDisbursed.toLocaleString('en-US', {minimumFractionDigits: 2})}</td></tr>
+            <tr><td><strong>Total Loan Charges (MWK):</strong></td><td>${totals.loanCharges.toLocaleString('en-US', {minimumFractionDigits: 2})}</td></tr>
+            <tr><td><strong>Total Amount per Installment (MWK):</strong></td><td>${totals.repaymentAmount.toLocaleString('en-US', {minimumFractionDigits: 2})}</td></tr>
             <tr><td><strong>High Risk (>90 days):</strong></td><td>${highRiskCount} loans</td></tr>
             <tr><td><strong>Medium Risk (31-90 days):</strong></td><td>${mediumRiskCount} loans</td></tr>
             <tr><td><strong>Low Risk (1-30 days):</strong></td><td>${lowRiskCount} loans</td></tr>
@@ -205,18 +249,20 @@ async function generateArrearsHTML(loans, filterOptions, reportId, reportTracker
                 <th>Client Name</th>
                 <th>Customer Group</th>
                 <th>Product</th>
-                <th>Amount Disbursed (MWK)</th>
+                <th>Amount Disbursed in Arrears (MWK)</th>
                 <th>Loan Charges (MWK)</th>
                 <th>Term</th>
                 <th>Repayment Frequency</th>
-                <th>Repayment Amount (MWK)</th>
+                <th>Amount per Installment (MWK)</th>
                 <th>Due Date</th>
                 <th>Missed Payments</th>
                 <th>Total Arrears (MWK)</th>
                 <th>Last Transaction</th>
                 <th>Days in Arrears</th>
+                <th>RBM Loan Classification</th>
                 <th>Risk Level</th>
                 <th>Loan Officer</th>
+                <th>Relationship Supervisor</th>
                 <th>Branch</th>
             </tr>
         </thead>
@@ -260,6 +306,7 @@ async function generateArrearsHTML(loans, filterOptions, reportId, reportTracker
 
                 // Determine risk level and CSS class
                 const arrearDays = parseInt(loan.arrear_days || 0);
+                const rbmClassification = determineRBMClassification(arrearDays);
                 let riskLevel = '';
                 let rowClass = '';
                 
@@ -273,6 +320,13 @@ async function generateArrearsHTML(loans, filterOptions, reportId, reportTracker
                     riskLevel = 'Low Risk';
                     rowClass = 'risk-low';
                 }
+
+                let branchDisplay = loan.BranchName || '';
+                if (!branchDisplay && loan.loan_branch) {
+                    const branchRow = await findBranch(loan.loan_branch);
+                    branchDisplay = branchRow ? branchRow.BranchName : '';
+                }
+                loan.branch_display = branchDisplay || 'N/A';
 
                 html += `
             <tr class="${rowClass}">
@@ -290,9 +344,11 @@ async function generateArrearsHTML(loans, filterOptions, reportId, reportTracker
                 <td class="amount">${parseFloat(loan.total_arrears || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
                 <td>${loan.last_transaction_date ? moment(loan.last_transaction_date).format('MMM DD, YYYY') : 'No Payment'}</td>
                 <td class="days">${arrearDays}</td>
+                <td>${rbmClassification}</td>
                 <td>${riskLevel}</td>
                 <td>${loan.officer_firstname || ''} ${loan.officer_lastname || ''}</td>
-                <td>${loan.BranchName || 'N/A'}</td>
+                <td>${loan.relationship_supervisor || 'N/A'}</td>
+                <td>${loan.branch_display || loan.BranchName || 'N/A'}</td>
             </tr>
                 `;
             }
@@ -301,13 +357,25 @@ async function generateArrearsHTML(loans, filterOptions, reportId, reportTracker
         </tbody>
         <tfoot>
             <tr style="background-color: #f0f0f0; font-weight: bold;">
-                <td colspan="3">TOTAL</td>
-                <td class="amount">${loans.reduce((sum, loan) => sum + parseFloat(loan.amount_disbursed || 0), 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
-                <td class="amount">${loans.reduce((sum, loan) => sum + parseFloat(loan.loan_charges || 0), 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
-                <td colspan="4"></td>
-                <td class="days">${loans.reduce((sum, loan) => sum + parseInt(loan.num_missed_payments || 0), 0)}</td>
-                <td class="amount">${totalArrears.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
-                <td colspan="5"></td>
+                <td>TOTAL</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td class="amount">${totals.amountDisbursed.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                <td class="amount">${totals.loanCharges.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                <td></td>
+                <td></td>
+                <td class="amount">${totals.repaymentAmount.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                <td></td>
+                <td class="days">${totals.missedPayments}</td>
+                <td class="amount">${totals.totalArrears.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
             </tr>
         </tfoot>
     </table>

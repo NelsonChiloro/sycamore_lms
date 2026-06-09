@@ -58,3 +58,7 @@ $route['translate_uri_dashes'] = FALSE;
 
 $route['apiv1/customer/login'] = 'Customer_api/login';
 $route['apiv1/customer/savings/balance'] = 'Customer_api/savings_balance';
+
+// Portfolio dashboard aliases (support legacy "portifolio" spelling in URL)
+$route['Reports/portifolio_dashboard'] = 'Reports/portfolio_dashboard';
+$route['reports/portifolio_dashboard'] = 'Reports/portfolio_dashboard';

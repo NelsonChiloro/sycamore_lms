@@ -1,6 +1,14 @@
 const moment = require('moment');
 const fs = require('fs');
 const path = require('path');
+const {
+    determineRBMClassification,
+    sqlLoanMaxDaysInArrearsExpr,
+    getOfficerIdsUnderSupervisor,
+    sqlRelationshipSupervisorNameExpr,
+    sqlBranchJoin,
+    appendBranchFilter
+} = require('./databaseHelpers');
 
 /**
  * Generate a Transactions Report HTML
@@ -27,6 +35,7 @@ async function generateTransactionsReport(filterOptions, reportId, reportTracker
             filterOptions.loan || null,
             filterOptions.product || null,
             filterOptions.officer || null,
+            filterOptions.supervisor || null,
             filterOptions.from || null,
             filterOptions.to || null,
             reportId,
@@ -72,42 +81,49 @@ async function generateTransactionsReport(filterOptions, reportId, reportTracker
  * @param {Object} db - Database connection
  * @returns {Promise<Object>} - Transactions data with filter names
  */
-async function getTransactionsData(branch, transactionType, loan, product, officer, fromDate, toDate, reportId, reportTrackers, db) {
-    return new Promise((resolve, reject) => {
-        if (!db) {
-            return reject(new Error('Database connection is not available'));
+async function getTransactionsData(branch, transactionType, loan, product, officer, supervisor, fromDate, toDate, reportId, reportTrackers, db) {
+    if (!db) {
+        throw new Error('Database connection is not available');
+    }
+
+    reportTrackers[reportId].percentage = 10;
+    console.log('Fetching transactions data...');
+
+    let officerFilterClause = '';
+    if (supervisor && supervisor !== 'All') {
+        const officerIds = await getOfficerIdsUnderSupervisor(supervisor);
+        if (!officerIds.length) {
+            officerFilterClause = ' AND 1=0';
+        } else {
+            officerFilterClause = ` AND l.loan_added_by IN (${officerIds.join(',')})`;
         }
+    }
 
-        // Update progress
-        reportTrackers[reportId].percentage = 10;
-        console.log('Fetching transactions data...');
-
-        // Build the SELECT query
+    return new Promise((resolve, reject) => {
         const query = `
             SELECT 
                 t.*, t.transaction_id as id, 
                 l.loan_id, l.loan_number, l.loan_customer, l.customer_type, 
                 tt.name, tt.transaction_type_id,
                 e.id, e.Firstname, e.Lastname,
+                ${sqlRelationshipSupervisorNameExpr('rel_sup')} as relationship_supervisor,
                 lp.product_name, lp.loan_product_id,
-                b.BranchName, b.Code as branch_code
+                b.BranchName, b.Code as branch_code,
+                ${sqlLoanMaxDaysInArrearsExpr('l')} as days_in_arrears
             FROM transactions t
             JOIN loan l ON l.loan_id = t.loan_id
             JOIN transaction_type tt ON tt.transaction_type_id = t.transaction_type
             JOIN employees e ON e.id = l.loan_added_by
+            LEFT JOIN employees rel_sup ON rel_sup.id = e.Supervisor
             JOIN loan_products lp ON lp.loan_product_id = l.loan_product
-            JOIN branches b ON b.id = l.branch
+            ${sqlBranchJoin('l', 'b')}
             WHERE 1=1
         `;
 
-        // Build the WHERE clause based on filters
-        let whereClause = '';
+        let whereClause = officerFilterClause;
         let params = [];
 
-        if (branch) {
-            whereClause += ' AND l.branch = ?';
-            params.push(branch);
-        }
+        whereClause = appendBranchFilter(whereClause, params, branch, 'l');
 
         if (transactionType) {
             whereClause += ' AND t.transaction_type = ?';
@@ -124,19 +140,21 @@ async function getTransactionsData(branch, transactionType, loan, product, offic
             params.push(product);
         }
 
-        if (officer) {
-            whereClause += ' AND l.loan_added_by = ?';
-            params.push(officer);
+        if (!supervisor || supervisor === 'All') {
+            if (officer) {
+                whereClause += ' AND l.loan_added_by = ?';
+                params.push(officer);
+            }
         }
 
         if (fromDate && toDate) {
-            whereClause += ' AND t.date_stamp BETWEEN ? AND ?';
+            whereClause += ' AND DATE(t.date_stamp) BETWEEN DATE(?) AND DATE(?)';
             params.push(fromDate, toDate);
         } else if (fromDate) {
-            whereClause += ' AND t.date_stamp >= ?';
+            whereClause += ' AND DATE(t.date_stamp) >= DATE(?)';
             params.push(fromDate);
         } else if (toDate) {
-            whereClause += ' AND t.date_stamp <= ?';
+            whereClause += ' AND DATE(t.date_stamp) <= DATE(?)';
             params.push(toDate);
         }
 
@@ -364,7 +382,9 @@ function generateHtml(transactions, filterOptions) {
             <td>${transaction.payment_number || ''}</td>
             <td>${formatCurrency(transaction.amount)}</td>
             <td>${formatDate(transaction.date_stamp)}</td>
+            <td>${determineRBMClassification(transaction.days_in_arrears)}</td>
             <td>${transaction.Firstname} ${transaction.Lastname}</td>
+            <td>${transaction.relationship_supervisor || 'N/A'}</td>
         </tr>`;
     });
 
@@ -521,35 +541,35 @@ function generateHtml(transactions, filterOptions) {
                     <thead>
                         <!-- Filter information rows (included in export) -->
                         <tr class="filter-header">
-                            <td colspan="12">Payments Transactions Report - Filter Information</td>
+                            <td colspan="14">Payments Transactions Report - Filter Information</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="2">Branch:</td>
-                            <td colspan="10">${filterOptions.branchName || 'All Branches'}</td>
+                            <td colspan="12">${filterOptions.branchName || 'All Branches'}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="2">Transaction Type:</td>
-                            <td colspan="10">${filterOptions.transactionTypeName || 'All Transaction Types'}</td>
+                            <td colspan="12">${filterOptions.transactionTypeName || 'All Transaction Types'}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="2">Loan Product:</td>
-                            <td colspan="10">${filterOptions.productName || 'All Products'}</td>
+                            <td colspan="12">${filterOptions.productName || 'All Products'}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="2">Loan Officer:</td>
-                            <td colspan="10">${filterOptions.officerName || 'All Officers'}</td>
+                            <td colspan="12">${filterOptions.officerName || 'All Officers'}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="2">Date Range:</td>
-                            <td colspan="10">${dateRangeText}</td>
+                            <td colspan="12">${dateRangeText}</td>
                         </tr>
                         <tr class="report-info">
                             <td colspan="2">Report Date:</td>
-                            <td colspan="10">${moment().format('YYYY-MM-DD HH:mm:ss')}</td>
+                            <td colspan="12">${moment().format('YYYY-MM-DD HH:mm:ss')}</td>
                         </tr>
                         <!-- Empty row for spacing -->
                         <tr>
-                            <td colspan="12">&nbsp;</td>
+                            <td colspan="14">&nbsp;</td>
                         </tr>
                         <!-- Data header row -->
                         <tr>
@@ -565,7 +585,9 @@ function generateHtml(transactions, filterOptions) {
                             <th>Amount (MWK)</th>
                             
                             <th>Payment Date</th>
-                            <th>Officer</th>
+                            <th>RBM Loan Classification</th>
+                            <th>Loan Officer</th>
+                            <th>Relationship Supervisor</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -575,7 +597,7 @@ function generateHtml(transactions, filterOptions) {
                         <tr>
                             <td colspan="8">Total</td>
                             <td>${formatCurrency(totalAmount)}</td>
-                            <td colspan="3"></td>
+                            <td colspan="5"></td>
                         </tr>
                     </tfoot>
                 </table>

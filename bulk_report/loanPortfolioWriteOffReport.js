@@ -1,5 +1,12 @@
 // loanPortfolioReport.js - Enhanced with country join and removed village
-const { query } = require('./databaseHelpers');
+const {
+    query,
+    sqlBranchJoin,
+    determineRBMClassification,
+    buildReportSupervisorContext,
+    appendOfficerOrSupervisorLoanFilter,
+    sqlRelationshipSupervisorNameExpr
+} = require('./databaseHelpers');
 const moment = require('moment');
 const util = require('util');
 const fs = require('fs');
@@ -20,7 +27,9 @@ const path = require('path');
  * @returns {Promise<string>} - HTML content of the report
  */
 async function generateLoanPortfolioWriteOffReport(options, reportId, reportTrackers) {
-    const { user, branch, branchgp, product, status, from, to } = options;
+    const { user, branch, branchgp, product, status, from, to, supervisor } = options;
+    const asOfDate = to ? formatDate(to) : moment().format('YYYY-MM-DD');
+    const supCtx = await buildReportSupervisorContext({ supervisor, user });
 
     console.log('Started processing Loan Portfolio Report');
 
@@ -32,6 +41,7 @@ async function generateLoanPortfolioWriteOffReport(options, reportId, reportTrac
         reportTrackers[reportId].percentage = 10;
 
         // Build the SQL query with joins to transaction and collateral tables
+        const queryParams = [asOfDate, asOfDate];
         let sql = `
             SELECT
                 loan.*,
@@ -59,6 +69,7 @@ async function generateLoanPortfolioWriteOffReport(options, reportId, reportTrac
                 ic.GrossMonthlyIncome,
                 e.Firstname AS efname,
                 e.Lastname AS elname,
+                ${sqlRelationshipSupervisorNameExpr('rel_sup')} AS relationship_supervisor,
                 loan.loan_customer AS cid,
                 approver.Firstname AS approverfname,
                 approver.Lastname AS approverlname,
@@ -99,6 +110,7 @@ async function generateLoanPortfolioWriteOffReport(options, reportId, reportTrac
                     SELECT SUM(amount)
                     FROM payement_schedules
                     WHERE loan_id = loan.loan_id
+                    AND payment_schedule <= DATE(?)
                 ) AS total_expected_installments,
                 
                 # Add actual payments
@@ -106,6 +118,7 @@ async function generateLoanPortfolioWriteOffReport(options, reportId, reportTrac
                     SELECT SUM(paid_amount)
                     FROM payement_schedules
                     WHERE loan_id = loan.loan_id
+                    AND payment_schedule <= DATE(?)
                 ) AS actual_payments
             FROM
                 loan
@@ -113,6 +126,8 @@ async function generateLoanPortfolioWriteOffReport(options, reportId, reportTrac
                 loan_products ON loan_products.loan_product_id = loan.loan_product
                 LEFT JOIN
                 employees e ON e.id = loan.loan_added_by
+                LEFT JOIN
+                employees rel_sup ON rel_sup.id = e.Supervisor
                 LEFT JOIN
                 employees approver ON approver.id = loan.loan_approved_by
                 LEFT JOIN
@@ -127,31 +142,37 @@ async function generateLoanPortfolioWriteOffReport(options, reportId, reportTrac
                 geo_countries gc ON ic.Country = gc.code
                 LEFT JOIN
                 \`groups\` g ON loan.loan_customer = g.group_id AND loan.customer_type = 'group'
-                LEFT JOIN
-                branches b ON loan.branch = b.id
+                ${sqlBranchJoin('loan', 'b')}
             WHERE
                 loan.loan_status IN ('WRITTEN_OFF')
         `;
 
         // Add filters
         if (branch !== 'All') {
-            sql += ` AND loan.branch = '${branch}'`;
+            const branchEsc = String(branch).replace(/'/g, "''");
+            sql += ` AND (
+                loan.branch = '${branchEsc}'
+                OR loan.branch IN (SELECT Code FROM branches WHERE id = '${branchEsc}')
+                OR loan.branch IN (SELECT BranchCode FROM branches WHERE id = '${branchEsc}')
+            )`;
         }
 
         if (status !== 'All') {
             sql += ` AND loan.loan_status = '${status}'`;
         }
 
-        if (user !== 'All') {
-            sql += ` AND loan.loan_added_by = '${user}'`;
-        }
+        sql = appendOfficerOrSupervisorLoanFilter(sql, { ...supCtx, user }, 'loan', 'user');
 
         if (product !== 'All') {
             sql += ` AND loan.loan_product = '${product}'`;
         }
 
         if (from && to) {
-            sql += ` AND loan.loan_added_date BETWEEN '${formatDate(from)}' AND '${formatDate(to)}'`;
+            sql += ` AND DATE(loan.loan_added_date) BETWEEN '${formatDate(from)}' AND '${formatDate(to)}'`;
+        } else if (from) {
+            sql += ` AND DATE(loan.loan_added_date) >= '${formatDate(from)}'`;
+        } else if (to) {
+            sql += ` AND DATE(loan.loan_added_date) <= '${formatDate(to)}'`;
         }
 
         sql += ` ORDER BY loan.loan_id DESC`;
@@ -160,7 +181,7 @@ async function generateLoanPortfolioWriteOffReport(options, reportId, reportTrac
         reportTrackers[reportId].percentage = 30;
 
         // Execute query
-        const loanData = await query(sql);
+        const loanData = await query(sql, queryParams);
         console.log(`Found ${loanData.length} loans matching the criteria`);
 
         // Update tracker to 50%
@@ -206,24 +227,29 @@ async function generateLoanPortfolioWriteOffReport(options, reportId, reportTrac
                 const arrearsQuery = `
                     SELECT
                         SUM(amount - paid_amount) as amount_in_arrears,
-                        DATEDIFF(CURDATE(), MIN(payment_schedule)) as days_in_arrears
+                        DATEDIFF(DATE(?), MIN(payment_schedule)) as days_in_arrears
                     FROM
                         payement_schedules
                     WHERE
                         loan_id = ?
-                      AND payment_schedule < CURDATE()
+                      AND payment_schedule < DATE(?)
                       AND status != 'PAID'
                 `;
 
-                const arrearsResult = await query(arrearsQuery, [loan.loan_id]);
+                const arrearsResult = await query(arrearsQuery, [asOfDate, loan.loan_id, asOfDate]);
 
                 loan.amount_in_arrears = arrearsResult[0]?.amount_in_arrears || 0;
-                loan.days_in_arrears = arrearsResult[0]?.days_in_arrears || 0;
+                loan.days_in_arrears = parseInt(arrearsResult[0]?.days_in_arrears || 0, 10);
+                loan.rbm_classification = determineRBMClassification(loan.days_in_arrears);
             } catch (error) {
                 console.error(`Error calculating arrears for loan ${loan.loan_id}:`, error);
                 loan.amount_in_arrears = 0;
                 loan.days_in_arrears = 0;
             }
+
+            loan.actual_payments = parseFloat(loan.actual_payments || 0);
+            loan.total_expected_installments = parseFloat(loan.total_expected_installments || 0);
+            loan.outstanding_balance = Math.max(loan.total_expected_installments - loan.actual_payments, 0);
 
             // Note: We don't need to query these again if using the subqueries in the main SQL,
             // but leaving this in as a backup if the subqueries approach doesn't work well
@@ -427,6 +453,7 @@ function generateHTML(loanData) {
             <th>Principal In Arrears (MWK)</th>
             <th>Amount In Arrears (MWK)</th>
             <th>Days In Arrears</th>
+            <th>RBM Loan Classification</th>
             <th>Last Credit Trx Date</th>
             <th>Collateral Value (MWK)</th>
             <th>Effective Date</th>
@@ -437,6 +464,7 @@ function generateHTML(loanData) {
             <th>Collection Rate (%)</th>
             <th>Loan Status</th>
             <th>Loan officer</th>
+            <th>Relationship Supervisor</th>
             <th>Loan Added Date</th>
   `;
 
@@ -518,6 +546,7 @@ function generateHTML(loanData) {
         <td class="text-right">0.00</td>
         <td class="text-right">${formatNumber(amountInArrears)}</td>
         <td class="text-right">${daysInArrears}</td>
+        <td>${loan.rbm_classification || determineRBMClassification(daysInArrears)}</td>
         <td>${formatDisplayDate(loan.last_credit_date)}</td>
         <td class="text-right">${formatNumber(collateralValue)}</td>
         <td>${formatDisplayDate(loan.loan_date)}</td>
@@ -528,6 +557,7 @@ function generateHTML(loanData) {
         <td class="text-right">${collectionRate}%</td>
         <td>${loan.loan_status || ''}</td>
         <td>${(loan.efname || '') + ' ' + (loan.elname || '')}</td>
+        <td>${loan.relationship_supervisor || 'N/A'}</td>
         <td>${formatDisplayDate(loan.loan_added_date)}</td>
     `;
 
@@ -565,27 +595,37 @@ function generateHTML(loanData) {
     const totalPrincipal = loanData.reduce((sum, loan) => sum + parseFloat(loan.loan_principal || 0), 0);
     const totalInterest = loanData.reduce((sum, loan) => sum + parseFloat(loan.loan_interest_amount || 0), 0);
     const totalExpected = loanData.reduce((sum, loan) => sum + parseFloat(loan.loan_amount_total || 0), 0);
+        const totalInstallmentAmount = loanData.reduce((sum, loan) => sum + parseFloat(loan.loan_amount_term || 0), 0);
+        const totalOutstandingBalance = loanData.reduce((sum, loan) => sum + parseFloat(loan.outstanding_balance || 0), 0);
     const totalAmountInArrears = loanData.reduce((sum, loan) => sum + parseFloat(loan.amount_in_arrears || 0), 0);
     const totalCollateralValue = loanData.reduce((sum, loan) => sum + parseFloat(loan.collateral_value || 0), 0);
+        const totalExpectedInstallments = loanData.reduce((sum, loan) => sum + parseFloat(loan.total_expected_installments || 0), 0);
+        const totalActualPayments = loanData.reduce((sum, loan) => sum + parseFloat(loan.actual_payments || 0), 0);
+        const overallCollectionRate = totalExpectedInstallments > 0
+                ? (totalActualPayments / totalExpectedInstallments) * 100
+                : 0;
 
-    // Calculate the colspan based on whether we have individual customer data
-    const summaryColspan = hasIndividualCustomers ? '7' : '7';
+        const baseColumns = 32;
+        const totalColumns = baseColumns + (hasIndividualCustomers ? 12 : 0);
+        const totalsRowCells = new Array(totalColumns).fill('');
+        totalsRowCells[0] = 'Totals:';
+        totalsRowCells[7] = formatNumber(totalPrincipal);
+        totalsRowCells[11] = formatNumber(totalInterest);
+        totalsRowCells[12] = formatNumber(totalExpected);
+        totalsRowCells[13] = formatNumber(totalInstallmentAmount);
+        totalsRowCells[14] = formatNumber(totalOutstandingBalance);
+        totalsRowCells[17] = formatNumber(totalAmountInArrears);
+        totalsRowCells[21] = formatNumber(totalCollateralValue);
+        totalsRowCells[25] = formatNumber(totalExpectedInstallments);
+        totalsRowCells[26] = formatNumber(totalActualPayments);
+        totalsRowCells[27] = `${formatNumber(overallCollectionRate)}%`;
 
-    html += `
-        <tr style="font-weight: bold; background-color: #e9ffe9;">
-          <td colspan="${summaryColspan}" class="text-right">Totals:</td>
-          <td class="text-right">${formatNumber(totalPrincipal)}</td>
-          <td colspan="3"></td>
-          <td class="text-right">${formatNumber(totalInterest)}</td>
-          <td class="text-right">${formatNumber(totalExpected)}</td>
-          <td colspan="4"></td>
-          <td class="text-right">${formatNumber(totalAmountInArrears)}</td>
-          <td colspan="2"></td>
-          <td class="text-right">${formatNumber(totalCollateralValue)}</td>
-          <td colspan="${hasIndividualCustomers ? '18' : '6'}"></td>
-        </tr>
-        </tbody>
-      </table>
+        html += `
+                <tr style="font-weight: bold; background-color: #e9ffe9;">
+                    ${totalsRowCells.map((cell, idx) => idx > 0 ? `<td class="text-right">${cell}</td>` : `<td>${cell}</td>`).join('')}
+                </tr>
+                </tbody>
+            </table>
       
       <div style="margin-top: 20px; text-align: center; color: #666; font-size: 12px;">
         <p>© Sycamore Credit ${new Date().getFullYear()}. All rights reserved.</p>

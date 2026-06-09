@@ -39,7 +39,9 @@ async function generateGroupLoanBatches() {
         await connection.beginTransaction();
         console.log('✓ Transaction started\n');
 
-        // Query to get individual customer loans that are part of groups
+        // Query to get individual customer loans that are part of groups.
+        // Safety: if loan.group_id was set during creation, only accept that same group.
+        // This prevents cross-group members from being mixed into a selected group's batch.
         const query = `
             SELECT
                 l.loan_id,
@@ -47,8 +49,14 @@ async function generateGroupLoanBatches() {
                 l.loan_customer,
                 l.loan_product,
                 l.loan_added_date,
+                l.group_id AS selected_group_id,
                 cg.group_id,
                 g.group_name,
+                (
+                    SELECT COUNT(DISTINCT cg2.group_id)
+                    FROM customer_groups cg2
+                    WHERE cg2.customer = l.loan_customer
+                ) AS customer_group_count,
                 DATE(l.loan_added_date) as creation_date
             FROM loan l
             INNER JOIN customer_groups cg ON l.loan_customer = cg.customer
@@ -57,6 +65,7 @@ async function generateGroupLoanBatches() {
               AND l.loan_product IN (6, 17, 27, 28, 29, 30)
               AND DATE(l.loan_added_date) >= '2025-09-01'
               AND (l.batch IS NULL OR l.batch = '')
+              AND (l.group_id IS NULL OR l.group_id = cg.group_id)
             ORDER BY cg.group_id, DATE(l.loan_added_date), l.loan_product
         `;
 
@@ -70,16 +79,39 @@ async function generateGroupLoanBatches() {
             return;
         }
 
-        // Group loans by: group_id + creation_date + product
+        // Validate membership and group loans by: group_id + creation_date + product
         const batches = {};
+        const rejectedLoans = [];
 
         loans.forEach(loan => {
+            // Hard validation:
+            // 1) If a selected group exists on the loan, it MUST match membership.
+            // 2) If no selected group exists and customer belongs to multiple groups, reject as ambiguous.
+            if (loan.selected_group_id && Number(loan.selected_group_id) !== Number(loan.group_id)) {
+                rejectedLoans.push({
+                    loan_id: loan.loan_id,
+                    loan_number: loan.loan_number,
+                    reason: `selected_group_id=${loan.selected_group_id} mismatches membership group_id=${loan.group_id}`
+                });
+                return;
+            }
+
+            if (!loan.selected_group_id && Number(loan.customer_group_count) > 1) {
+                rejectedLoans.push({
+                    loan_id: loan.loan_id,
+                    loan_number: loan.loan_number,
+                    reason: `customer belongs to ${loan.customer_group_count} groups and loan has no selected group`
+                });
+                return;
+            }
+
+            const resolvedGroupId = Number(loan.selected_group_id || loan.group_id);
             const creationDate = moment(loan.creation_date).format('YYYYMMDD');
-            const batchKey = `${loan.group_id}_${creationDate}_${loan.loan_product}`;
+            const batchKey = `${resolvedGroupId}_${creationDate}_${loan.loan_product}`;
 
             if (!batches[batchKey]) {
                 batches[batchKey] = {
-                    group_id: loan.group_id,
+                    group_id: resolvedGroupId,
                     group_name: loan.group_name,
                     creation_date: creationDate,
                     loan_product: loan.loan_product,
@@ -90,7 +122,16 @@ async function generateGroupLoanBatches() {
             batches[batchKey].loans.push(loan);
         });
 
-        console.log(`Identified ${Object.keys(batches).length} unique batches\n`);
+        console.log(`Identified ${Object.keys(batches).length} unique batches`);
+        console.log(`Rejected ${rejectedLoans.length} loans due to group validation\n`);
+
+        if (rejectedLoans.length > 0) {
+            console.log('Rejected loans (validation failures):');
+            rejectedLoans.forEach((item) => {
+                console.log(`  - Loan ${item.loan_number} (ID: ${item.loan_id}): ${item.reason}`);
+            });
+            console.log('');
+        }
         console.log('='.repeat(80));
 
         let totalUpdated = 0;

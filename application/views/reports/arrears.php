@@ -33,7 +33,8 @@ $products = get_all_loans('loan');
 							?>
 						</select>
 						<select name="by_date" class="sselect" id="by_date">
-							<option value="Custom">Custom</option>
+							<option value="All" <?php if($this->input->get('by_date')=="All"){echo "selected";} ?>>All arrears</option>
+							<option value="Custom" <?php if($this->input->get('by_date')=="Custom" || $this->input->get('by_date')===""){echo "selected";} ?>>Custom</option>
 							<option value="one_day" <?php  if($this->input->get('by_date')=="one_day"){echo "selected";} ?>>One day</option>
 							<option value="three_days" <?php  if($this->input->get('by_date')=="three_days"){echo "selected";} ?>>Three days</option>
 							<option value="week" <?php  if($this->input->get('by_date')=="week"){echo "selected";} ?>>One week</option>
@@ -42,21 +43,17 @@ $products = get_all_loans('loan');
 							<option value="3month" <?php  if($this->input->get('by_date')=="3month"){echo "selected";} ?>>Three months</option>
 						</select>
                         Officer:
-                        <select name="idofficer">
+                        <select name="idofficer" id="report-filter-officer">
                             <option value="All">All Officers</option>
                             <?php
                             foreach ($users as $user){
                                 ?>
-                                <option value="<?php echo $user->id;?>" <?php if($user->id==$this->input->get('id')){echo 'selected';}  ?>><?php echo $user->Firstname." ".$user->Lastname;?></option>
+                                <option value="<?php echo $user->id;?>" <?php if($user->id==$this->input->get('idofficer')){echo 'selected';}  ?>><?php echo $user->Firstname." ".$user->Lastname;?></option>
                                 <?php
                             }
-
                             ?>
-                            <
-
-
-
                         </select>
+                        <?php $this->load->view('reports/_relationship_supervisor_filter'); ?>
 						Date from:<input type="text"   class="dpicker" name="from" value="<?php  echo $this->input->get('from')?>" >
 						Date to:<input type="text"  class="dpicker" name="to" value="<?php  echo $this->input->get('to')?>" >
 						<button type="submit" name="search" value="filter">Filter</button>
@@ -77,7 +74,9 @@ $products = get_all_loans('loan');
 					<th>Check Date</th>
 					<th>Amount Due</th>
 					<th>Payment number</th>
+					<th>Branch</th>
 					<th>Officer</th>
+					<th>Relationship Supervisor</th>
 					<th>Action</th>
 
 				</tr>
@@ -85,10 +84,15 @@ $products = get_all_loans('loan');
 				<tbody>
 				<?php
 				$n = 1;
-$totals =0;
+				$totals = isset($arrears_total) ? (float) $arrears_total : 0;
 				foreach ($loan_data as $loan)
 				{
-					$totals +=$loan->amount;
+					$amount_due = isset($loan->amount_due)
+						? (float) $loan->amount_due
+						: ((float) $loan->amount - (float) $loan->paid_amount);
+					if (!isset($arrears_total)) {
+						$totals += $amount_due;
+					}
 					if($loan->customer_type=='group'){
 						$group = $this->Groups_model->get_by_id($loan->loan_customer);
 
@@ -109,9 +113,11 @@ $totals =0;
 						<td><?php echo $loan->product_name ?></td>
 						<td><?php echo $loan->payment_schedule ?></td>
 <!--						<td>MK--><?php //echo number_format($loan->loan_principal,2) ?><!--</td>-->
-						<td><?php echo $loan->amount ?></td>
+						<td><?php echo number_format($amount_due, 2); ?></td>
 						<td><?php echo $loan->payment_number ?></td>
+						<td><?php echo !empty($loan->branch_display_name) ? htmlspecialchars($loan->branch_display_name) : 'N/A'; ?></td>
 						<td><?php echo $loan->efname." ".$loan->elname ?></td>
+						<td><?php echo htmlspecialchars(report_format_supervisor_name($loan)); ?></td>
 
 						<td><a href="<?php echo base_url('loan/view/').$loan->loan_id?>">View</a></td>
 

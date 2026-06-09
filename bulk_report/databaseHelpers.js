@@ -5,7 +5,7 @@ const pool = mysql.createPool({
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'financerealm_sycamore_demo',
+    database: process.env.DB_NAME || 'live_sycamore',
     waitForConnections: true,
     connectionLimit: parseInt(process.env.DB_POOL_LIMIT || '15', 10),
     queueLimit: parseInt(process.env.DB_POOL_QUEUE_LIMIT || '0', 10),
@@ -57,19 +57,47 @@ const getAmountOfArrearsPaid = async (loanID) => {
     const results = await query(sql);
     return results[0]?.amount_arrears || 0;
 };
+/**
+ * RBM Loan Classification from days in arrears (same rules as RBM Classification Status Report).
+ * Standard: 0-29, Special Mention: 30-59, Substandard: 60-89, Doubtful: 90-179, Loss: 180+
+ */
+function determineRBMClassification(daysInArrears) {
+    const days = Number(daysInArrears) || 0;
+    if (days < 30) {
+        return 'Standard';
+    }
+    if (days < 60) {
+        return 'Special Mention';
+    }
+    if (days < 90) {
+        return 'Substandard';
+    }
+    if (days < 180) {
+        return 'Doubtful';
+    }
+    return 'Loss';
+}
+
+/** SQL subquery: max days in arrears for unpaid installments past due (per loan). */
+function sqlLoanMaxDaysInArrearsExpr(loanAlias = 'l') {
+    return `COALESCE((
+        SELECT MAX(DATEDIFF(CURDATE(), ps.payment_schedule))
+        FROM payement_schedules ps
+        WHERE ps.loan_id = ${loanAlias}.loan_id
+          AND ps.status = 'NOT PAID'
+          AND ps.payment_schedule < CURDATE()
+    ), 0)`;
+}
+
 const getDaysOfArrears = async (loanID) => {
     const sql = `
-        SELECT DATEDIFF(CURRENT_DATE(), MAX(ps.payment_schedule)) AS days_in_arrears
+        SELECT ${sqlLoanMaxDaysInArrearsExpr('l')} AS days_in_arrears
         FROM loan l
-        JOIN payement_schedules ps ON l.loan_id = ps.loan_id
         WHERE l.loan_id = ?
-        AND ps.payment_schedule < CURDATE()
-        AND l.loan_status = 'Active'
-        AND ps.status = 'NOT PAID'
     `;
 
     const results = await query(sql, [loanID]);
-    return results[0]?.days_in_arrears || 0 ; // Since you're expecting a single row
+    return results[0]?.days_in_arrears || 0;
 };
 
 const getNumberOfArrears = async (loanID) => {
@@ -127,6 +155,22 @@ const getLoanRepayments = async (loanID) => {
     `;
     const results = await query(sql, [loanID]);
     return results;
+};
+
+// Expected-vs-paid totals up to an as-of date (default today).
+const getExpectedAndPaidToDate = async (loanID, asOfDate = null) => {
+    const sql = `
+        SELECT
+            COALESCE(SUM(CASE WHEN payment_schedule <= DATE(COALESCE(?, CURDATE())) THEN amount ELSE 0 END), 0) AS total_expected,
+            COALESCE(SUM(CASE WHEN payment_schedule <= DATE(COALESCE(?, CURDATE())) THEN paid_amount ELSE 0 END), 0) AS total_paid
+        FROM payement_schedules
+        WHERE loan_id = ?
+    `;
+    const results = await query(sql, [asOfDate, asOfDate, loanID]);
+    return {
+        total_expected: parseFloat(results[0]?.total_expected || 0),
+        total_paid: parseFloat(results[0]?.total_paid || 0),
+    };
 };
 const getPARsummaryu = async (user, loanproduct) => {
     // Initialize the query
@@ -317,6 +361,32 @@ const findBranch = async (branchReference) => {
     return results[0] || null;
 };
 
+/**
+ * JOIN branches when loan.branch may store branches.id, Code, or BranchCode.
+ */
+function sqlBranchJoin(loanAlias = 'l', branchAlias = 'b') {
+    return `LEFT JOIN branches ${branchAlias} ON (
+        ${loanAlias}.branch = ${branchAlias}.id
+        OR ${loanAlias}.branch = ${branchAlias}.Code
+        OR ${loanAlias}.branch = ${branchAlias}.BranchCode
+    )`;
+}
+
+/**
+ * Append branch filter (UI passes branches.id) matching any stored loan.branch form.
+ */
+function appendBranchFilter(whereClause, queryParams, branch, loanAlias = 'l') {
+    if (!branch || branch === 'All') {
+        return whereClause;
+    }
+    queryParams.push(branch, branch, branch);
+    return `${whereClause} AND (
+        ${loanAlias}.branch = ?
+        OR ${loanAlias}.branch IN (SELECT Code FROM branches WHERE id = ?)
+        OR ${loanAlias}.branch IN (SELECT BranchCode FROM branches WHERE id = ?)
+    )`;
+}
+
 
 // Function to get previous loan
 const getPreviousLoan = async (customerID, callback) => {
@@ -364,6 +434,111 @@ const sumTotalPar = async () => {
     return results; // Return the result set
 };
 
+function roleNameIsRelationshipOfficer(roleName) {
+    const name = String(roleName || '').toUpperCase().replace(/\s+/g, ' ');
+    return name.includes('RELATIONSHIP') && name.includes('OFFICER') && !name.includes('SUPERVISOR');
+}
+
+let cachedRelationshipOfficerRoleIds = null;
+async function getRelationshipOfficerRoleIds() {
+    if (cachedRelationshipOfficerRoleIds) {
+        return cachedRelationshipOfficerRoleIds;
+    }
+    const rows = await query('SELECT id, RoleName FROM roles');
+    cachedRelationshipOfficerRoleIds = rows
+        .filter((r) => roleNameIsRelationshipOfficer(r.RoleName))
+        .map((r) => r.id);
+    return cachedRelationshipOfficerRoleIds;
+}
+
+async function getOfficerIdsUnderSupervisor(supervisorId) {
+    const sid = parseInt(supervisorId, 10);
+    if (!sid) {
+        return [];
+    }
+    const roleIds = await getRelationshipOfficerRoleIds();
+    if (!roleIds.length) {
+        return [];
+    }
+    const sql = `SELECT id FROM employees WHERE Supervisor = ${sid} AND Role IN (${roleIds.join(',')})`;
+    const rows = await query(sql);
+    return rows.map((r) => r.id);
+}
+
+function sqlRelationshipSupervisorNameExpr(supervisorAlias = 'rel_sup') {
+    return `TRIM(CONCAT(COALESCE(${supervisorAlias}.Firstname, ''), ' ', COALESCE(${supervisorAlias}.Lastname, '')))`;
+}
+
+function sqlRelationshipSupervisorJoin(loanAlias = 'loan', officerAlias = 'e', supervisorAlias = 'rel_sup') {
+    return `LEFT JOIN employees ${officerAlias} ON ${officerAlias}.id = ${loanAlias}.loan_added_by
+LEFT JOIN employees ${supervisorAlias} ON ${supervisorAlias}.id = ${officerAlias}.Supervisor`;
+}
+
+async function buildReportSupervisorContext(options = {}) {
+    const supervisor = options.supervisor && options.supervisor !== 'All' ? options.supervisor : null;
+    let supervisorOfficerIds = null;
+    if (supervisor) {
+        supervisorOfficerIds = await getOfficerIdsUnderSupervisor(supervisor);
+    }
+    return { supervisor, supervisorOfficerIds };
+}
+
+function appendOfficerOrSupervisorLoanFilter(sql, ctx, loanAlias = 'loan', officerField = 'user') {
+    if (ctx.supervisorOfficerIds !== null) {
+        if (!ctx.supervisorOfficerIds.length) {
+            return `${sql} AND 1=0`;
+        }
+        return `${sql} AND ${loanAlias}.loan_added_by IN (${ctx.supervisorOfficerIds.join(',')})`;
+    }
+    const officer = ctx[officerField] || ctx.officer || ctx.user;
+    if (officer && officer !== 'All') {
+        const esc = String(officer).replace(/'/g, "''");
+        return `${sql} AND ${loanAlias}.loan_added_by = '${esc}'`;
+    }
+    return sql;
+}
+
+/**
+ * SQL expression for the unpaid charges (interest + loan cover + admin fee) of a single
+ * payment schedule row, applying charge-first allocation.
+ *
+ * Charges are paid before principal, so unpaid charges = MAX(charges - paid_amount, 0)
+ * where charges = amount - principal.
+ *
+ * @param {string} alias - table alias for payement_schedules (default 'ps')
+ */
+function sqlUnpaidChargesExpr(alias = 'ps') {
+    return `GREATEST(
+        (COALESCE(${alias}.amount, 0) - COALESCE(${alias}.principal, 0)) - COALESCE(${alias}.paid_amount, 0),
+        0
+    )`;
+}
+
+/**
+ * SQL expression for the unpaid principal of a single payment schedule row,
+ * applying charge-first allocation priority:
+ *   Loan Cover → Admin Fee → Interest → Principal
+ *
+ * Payment is allocated to charges (amount - principal) first.
+ * Only after all charges are covered does the remainder reduce principal.
+ *
+ * Formula:
+ *   charges        = amount - principal
+ *   principal_paid = MAX(paid_amount - charges, 0)
+ *   unpaid_principal = MAX(principal - principal_paid, 0)
+ *
+ * @param {string} alias - table alias for payement_schedules (default 'ps')
+ */
+function sqlUnpaidPrincipalExpr(alias = 'ps') {
+    return `GREATEST(
+        COALESCE(${alias}.principal, 0) - GREATEST(
+            COALESCE(${alias}.paid_amount, 0) - (COALESCE(${alias}.amount, 0) - COALESCE(${alias}.principal, 0)),
+            0
+        ),
+        0
+    )`;
+}
+
 // Export all functions
 module.exports = {
     query, // Export the query function for other files to use
@@ -375,6 +550,7 @@ module.exports = {
     getLoanDetails,
     getUserProfile,
     getLoanRepayments,
+    getExpectedAndPaidToDate,
     getLoanStatus,
     getTotalPayments,
     rbmReport,
@@ -382,12 +558,24 @@ module.exports = {
     loanCollection,
     getById,
     findBranch,
+    sqlBranchJoin,
+    appendBranchFilter,
     getPreviousLoan,
     getRBMLoanPaymentById,
     getDaysOfArrears,
+    determineRBMClassification,
+    sqlLoanMaxDaysInArrearsExpr,
     getParPrincipal,
     getPARsummary,
     getPARsummaryu,
     getAllOverDuePayments,
-    sumTotalPar
+    sumTotalPar,
+    getOfficerIdsUnderSupervisor,
+    getRelationshipOfficerRoleIds,
+    sqlRelationshipSupervisorNameExpr,
+    sqlRelationshipSupervisorJoin,
+    buildReportSupervisorContext,
+    appendOfficerOrSupervisorLoanFilter,
+    sqlUnpaidPrincipalExpr,
+    sqlUnpaidChargesExpr
 };

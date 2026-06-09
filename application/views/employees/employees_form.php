@@ -90,12 +90,15 @@ $countryd = $this->Geo_countries_model->get_all();
 							</div>
 							<div class="form-group col-6">
 								<label for="int">Role * <?php echo form_error('Role') ?></label>
-								<select class="form-control" name="Role" >
+								<select class="form-control" name="Role" id="Role">
 									<option value="">--select--</option>
 									<?php
+                                    $ci =& get_instance();
+                                    $ci->load->model('Employees_model');
 									foreach ($r as $item){
+                                        $is_ro = $ci->Employees_model->role_is_relationship_officer($item->RoleName);
 										?>
-										<option value="<?php echo  $item->id?>" <?php if($Role==$item->id){echo "selected";} ?>><?php echo  $item->RoleName?></option>
+										<option value="<?php echo (int) $item->id?>" data-is-relationship-officer="<?php echo $is_ro ? '1' : '0'; ?>" <?php if($Role==$item->id){echo "selected";} ?>><?php echo htmlspecialchars($item->RoleName); ?></option>
 
 										<?php
 									}
@@ -117,6 +120,20 @@ $countryd = $this->Geo_countries_model->get_all();
 									?>
 								</select>
 							</div>
+                            <div class="form-group col-6" id="supervisor-field-wrap" style="display: none;">
+                                <label for="Supervisor">Relationship supervisor * <?php echo form_error('Supervisor') ?></label>
+                                <select class="form-control" name="Supervisor" id="Supervisor">
+                                    <option value="">-- Select supervisor --</option>
+                                    <?php
+                                    $supervisors = isset($relationship_supervisors) ? $relationship_supervisors : array();
+                                    foreach ($supervisors as $sup) {
+                                        $sel = (isset($Supervisor) && (int) $Supervisor === (int) $sup->id) ? ' selected' : '';
+                                        echo '<option value="' . (int) $sup->id . '"' . $sel . '>' .
+                                            htmlspecialchars(trim($sup->Firstname . ' ' . $sup->Lastname)) . '</option>';
+                                    }
+                                    ?>
+                                </select>
+                            </div>
 							<input type="text" name="system_date" value="<?php echo $this->session->userdata('system_date') ?>" hidden>
 							<input type="hidden" name="id" value="<?php echo $id; ?>" />
 							<button type="submit" class="btn btn-primary"><?php echo $button ?></button>
@@ -125,3 +142,53 @@ $countryd = $this->Geo_countries_model->get_all();
 		</div>
 	</div>
 </div>
+<script>
+(function () {
+    var roleMap = <?php echo isset($roles_json) ? $roles_json : '{"officer":[],"supervisor":[]}'; ?>;
+    function initSupervisorFieldToggle() {
+        var roleSelect = document.getElementById('Role');
+        var supervisorWrap = document.getElementById('supervisor-field-wrap');
+        var supervisorSelect = document.getElementById('Supervisor');
+        if (!roleSelect || !supervisorWrap) {
+            return;
+        }
+        function isOfficerRole() {
+            var opt = roleSelect.options[roleSelect.selectedIndex];
+            if (opt && opt.getAttribute('data-is-relationship-officer') === '1') {
+                return true;
+            }
+            var roleId = parseInt(roleSelect.value, 10);
+            if (roleMap.officer && roleMap.officer.indexOf(roleId) !== -1) {
+                return true;
+            }
+            if (!opt || !opt.text) {
+                return false;
+            }
+            var text = opt.text.toUpperCase();
+            return text.indexOf('RELATIONSHIP') !== -1
+                && text.indexOf('OFFICER') !== -1
+                && text.indexOf('SUPERVISOR') === -1;
+        }
+        function syncSupervisorField() {
+            var show = isOfficerRole();
+            supervisorWrap.style.display = show ? 'block' : 'none';
+            if (supervisorSelect) {
+                supervisorSelect.required = show;
+                if (!show) {
+                    supervisorSelect.value = '';
+                }
+            }
+        }
+        roleSelect.addEventListener('change', syncSupervisorField);
+        if (window.jQuery) {
+            jQuery(roleSelect).on('change select2:select', syncSupervisorField);
+        }
+        syncSupervisorField();
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initSupervisorFieldToggle);
+    } else {
+        initSupervisorFieldToggle();
+    }
+})();
+</script>

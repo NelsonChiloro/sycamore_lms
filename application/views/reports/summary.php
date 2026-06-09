@@ -23,35 +23,48 @@ $payments_today_total = isset($summary_stats['payments_today']) ? (float) $summa
 $payments_week_total = isset($summary_stats['payments_week']) ? (float) $summary_stats['payments_week'] : 0;
 $payments_month_total = isset($summary_stats['payments_month']) ? (float) $summary_stats['payments_month'] : 0;
 ?>
-<div class="main-content">
-    <div class="page-header no-gutters has-tab" style="margin-bottom: 2px !important;">
-        <h2 class="font-weight-normal">DASHBOARD SUMMARY</h2>
-
-    </div>
-    <?php
-
-    $show = false;
-    foreach ($this->session->userdata('access') as $r) {
-        if ($r->controllerid == 113) {
-            $show = true;
-            break;
-        }
+<style>
+    .summary-dashboard {
+        --summary-bg: linear-gradient(180deg, #f7f4ee 0%, #ffffff 36%, #f4efe6 100%);
+        --summary-surface: rgba(255, 255, 255, 0.9);
+        --summary-border: rgba(26, 40, 57, 0.08);
+        --summary-shadow: 0 18px 45px rgba(23, 29, 38, 0.08);
+        --summary-text: #18212b;
+        --summary-muted: #667487;
+        --summary-heading: "Bahnschrift", "Aptos Display", "Segoe UI", sans-serif;
+        --summary-body: "Aptos", "Segoe UI", "Trebuchet MS", sans-serif;
+        background: var(--summary-bg);
+        border: 1px solid rgba(26, 40, 57, 0.05);
+        border-radius: 28px;
+        box-shadow: var(--summary-shadow);
+        color: var(--summary-text);
+        font-family: var(--summary-body);
+        margin-bottom: 24px;
+        overflow: hidden;
+        padding: 28px;
+        position: relative;
     }
-    ?>
-    <?php
-    if($show){
-        ?>
-        <div class="row">
-            <div class="col-lg-12">
-                <h2 class="heading">Revenue</h2>
-                <hr class="dash" >
-            </div>
-        </div>
-        <div class="row">
 
-            <div class="col-lg-4 col-md-4 col-sm-6 col-xs-12">
-                <a class="dashboard-stat green" href="<?php echo base_url('Loan/loan_revenue') ?>">
-                    <div class="visual">
+    .summary-dashboard:before,
+    .summary-dashboard:after {
+        background: radial-gradient(circle, rgba(22, 107, 92, 0.18) 0%, rgba(22, 107, 92, 0) 65%);
+        content: '';
+        height: 260px;
+        position: absolute;
+        width: 260px;
+        z-index: 0;
+    }
+
+    .summary-dashboard:before {
+        left: -90px;
+        top: -110px;
+    }
+
+    .summary-dashboard:after {
+        background: radial-gradient(circle, rgba(214, 121, 62, 0.14) 0%, rgba(214, 121, 62, 0) 68%);
+        bottom: -130px;
+        right: -70px;
+    }
 
                     </div>
                     <div class="details">
@@ -86,20 +99,35 @@ $payments_month_total = isset($summary_stats['payments_month']) ? (float) $summa
                         </div>
                         <div class="desc">Total paid/collected loan administration fees on all Loans <br/></div>
 
+    .summary-section-head {
+        align-items: baseline;
+        display: flex;
+        gap: 14px;
+        justify-content: space-between;
+        margin-bottom: 16px;
+    }
 
-                    </div>
-                </a>
-            </div>
+    .summary-section-head h3 {
+        color: #1b2430;
+        font-family: var(--summary-heading);
+        font-size: 19px;
+        font-weight: 700;
+        margin: 0;
+    }
 
+    .summary-section-head p {
+        color: var(--summary-muted);
+        font-size: 13px;
+        margin: 0;
+    }
 
-        </div>
-        <div class="row">
-            <div class="col-lg-12">
-                <h2 class="heading">Balances</h2>
-                <hr class="dash" >
-            </div>
-        </div>
-        <div class="row">
+    .summary-grid,
+    .summary-mini-grid,
+    .summary-product-grid,
+    .summary-split-grid {
+        display: grid;
+        gap: 16px;
+    }
 
             <div class="col-lg-4 col-md-4 col-sm-6 col-xs-12">
                 <a class="dashboard-stat hoki" href="<?php echo base_url('Loan/balances') ?>">
@@ -141,14 +169,19 @@ $payments_month_total = isset($summary_stats['payments_month']) ? (float) $summa
                 </a>
             </div>
 
+    .summary-tone-emerald .summary-chip,
+    .summary-chip.summary-tone-emerald,
+    .summary-tone-emerald .summary-eyebrow {
+        background: rgba(25, 122, 98, 0.12);
+        color: #116754;
+    }
 
-        </div>
-        <div class="row">
-            <div class="col-lg-12">
-                <h2 class="heading">Loan Product-wise- outstanding balances</h2>
-                <hr class="dash" >
-            </div>
-        </div>
+    .summary-tone-teal .summary-chip,
+    .summary-chip.summary-tone-teal,
+    .summary-tone-teal .summary-eyebrow {
+        background: rgba(16, 122, 132, 0.11);
+        color: #0f6872;
+    }
 
         <div class="row">
             <div class="col-lg-4 col-md-4 col-sm-6 col-xs-12">
@@ -184,16 +217,26 @@ $payments_month_total = isset($summary_stats['payments_month']) ? (float) $summa
             }
             ?>
 
-        </div>
+    .summary-tone-rose .summary-chip,
+    .summary-chip.summary-tone-rose,
+    .summary-tone-rose .summary-eyebrow {
+        background: rgba(171, 76, 88, 0.12);
+        color: #8d3f49;
+    }
 
-        <div class="row">
-            <div class="col-lg-12">
-                <h2 class="heading float-left">Arrears</h2> <h2 class="heading float-right">Payments Due</h2>
-            </div>
-        </div>
+    .summary-tone-amber .summary-chip,
+    .summary-chip.summary-tone-amber,
+    .summary-tone-amber .summary-eyebrow {
+        background: rgba(214, 121, 62, 0.14);
+        color: #9b5121;
+    }
 
-        <div class="row">
-            <div class="col-lg-6 border-right border-success">
+    .summary-tone-stone .summary-chip,
+    .summary-chip.summary-tone-stone,
+    .summary-tone-stone .summary-eyebrow {
+        background: rgba(126, 110, 93, 0.12);
+        color: #655647;
+    }
 
                 <div class="row">
                     <div class="col-lg-4 col-md-4 col-sm-6 col-xs-12">
@@ -272,7 +315,19 @@ $payments_month_total = isset($summary_stats['payments_month']) ? (float) $summa
                                 </div>
                                 <div class="desc">Two Months Arrears</div>
                             </div>
+                            <h4><?php echo $card['title']; ?></h4>
+                            <div class="summary-value"><?php echo $format_amount($card['value']); ?></div>
+                            <p class="summary-note"><?php echo $card['note']; ?></p>
                         </a>
+                    <?php } ?>
+                </div>
+            </div>
+
+            <div class="summary-section">
+                <div class="summary-section-head">
+                    <div>
+                        <h3>Outstanding balances</h3>
+                        <p>Current unpaid balances across interest, cover and administration fees.</p>
                     </div>
                     <div class="col-lg-4 col-md-4 col-sm-6 col-xs-12">
                         <a class="dashboard-stat red" href="<?php echo base_url('Reports/arrears?by_date=3month&loan=All')?>">
@@ -285,12 +340,13 @@ $payments_month_total = isset($summary_stats['payments_month']) ? (float) $summa
                                 </div>
                                 <div class="desc">Three Months Arrears</div>
                             </div>
+                            <h4><?php echo $card['title']; ?></h4>
+                            <div class="summary-value"><?php echo $format_amount($card['value']); ?></div>
+                            <p class="summary-note"><?php echo $card['note']; ?></p>
                         </a>
-                    </div>
-
+                    <?php } ?>
                 </div>
             </div>
-            <div class="col-lg-6">
 
                 <div class="row">
                     <div class="col-lg-4 col-md-4 col-sm-6 col-xs-12">
@@ -317,12 +373,27 @@ $payments_month_total = isset($summary_stats['payments_month']) ? (float) $summa
                                 </div>
                                 <div class="desc">Payment due this week</div>
                             </div>
+                            <h4><?php echo $product->product_name; ?></h4>
+                            <div class="summary-value"><?php echo $format_amount($product->outstanding_principal); ?></div>
+                            <p>Outstanding principal for this product line.</p>
                         </a>
+                    <?php } ?>
+                </div>
+            </div>
+
+            <div class="summary-section">
+                <div class="summary-section-head">
+                    <div>
+                        <h3>Collections watchlist</h3>
+                        <p>Overdues and due-soon amounts side by side for faster daily follow-up.</p>
                     </div>
-                    <div class="col-lg-4 col-md-4 col-sm-6 col-xs-12">
-                        <a class="dashboard-stat orange" href="<?php echo base_url('Reports/to_pay_month')?>">
-                            <div class="visual">
-                                <i class="fa fa-credit-card"></i>
+                </div>
+                <div class="summary-split-grid">
+                    <div class="summary-panel">
+                        <div class="summary-panel-head">
+                            <div>
+                                <h4>Arrears ladder</h4>
+                                <p>Track how quickly overdue balances are aging.</p>
                             </div>
                             <div class="details">
                                 <div class="numberr">
@@ -330,10 +401,21 @@ $payments_month_total = isset($summary_stats['payments_month']) ? (float) $summa
                                 </div>
                                 <div class="desc">Payment due this month</div>
                             </div>
-                        </a>
+                            <span class="summary-chip summary-tone-amber">Cash-in view</span>
+                        </div>
+                        <div class="summary-mini-grid">
+                            <?php foreach ($payment_cards as $card) { ?>
+                                <a class="summary-card summary-tone-<?php echo $card['tone']; ?>" href="<?php echo $card['link']; ?>">
+                                    <div class="summary-card-top">
+                                        <span class="summary-chip"><?php echo $card['title']; ?></span>
+                                    </div>
+                                    <h4><?php echo $card['title']; ?></h4>
+                                    <div class="summary-value"><?php echo $format_amount($card['value']); ?></div>
+                                    <p class="summary-note"><?php echo $card['note']; ?></p>
+                                </a>
+                            <?php } ?>
+                        </div>
                     </div>
-
-
                 </div>
             </div>
         </div>
@@ -607,3 +689,30 @@ $payments_month_total = isset($summary_stats['payments_month']) ? (float) $summa
 
 
 </div>
+<?php if ($summary_needs_refresh) { ?>
+    <script>
+        (function () {
+            var statusNode = document.getElementById('summary-refresh-status');
+            var request = new XMLHttpRequest();
+
+            request.open('GET', '<?php echo base_url('Reports/summary_data'); ?>', true);
+            request.onreadystatechange = function () {
+                if (request.readyState !== 4) {
+                    return;
+                }
+
+                if (request.status >= 200 && request.status < 300) {
+                    window.location.reload();
+                    return;
+                }
+
+                if (statusNode) {
+                    statusNode.className = 'alert alert-warning';
+                    statusNode.textContent = 'Dashboard figures could not be refreshed automatically. Reload this page in a few moments.';
+                }
+            };
+
+            request.send();
+        })();
+    </script>
+<?php } ?>

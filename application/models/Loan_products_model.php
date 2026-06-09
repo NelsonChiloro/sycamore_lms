@@ -18,8 +18,22 @@ class Loan_products_model extends CI_Model
     // get all
     function get_all()
     {
+        $this->db->reset_query();
         $this->db->order_by($this->id, $this->order);
-        return $this->db->get($this->table)->result();
+        $rows = $this->db->get($this->table)->result();
+        return is_array($rows) ? $rows : array();
+    }
+
+    /**
+     * Loan products for a branch (loan_products.branch stores branches.Code, e.g. 7042, 89).
+     */
+    function get_by_branch_code($branch_code)
+    {
+        $this->db->reset_query();
+        $this->db->order_by($this->id, $this->order);
+        $this->db->where('branch', trim((string)$branch_code));
+        $rows = $this->db->get($this->table)->result();
+        return is_array($rows) ? $rows : array();
     }
 
     // get data by id

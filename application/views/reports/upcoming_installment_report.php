@@ -33,7 +33,7 @@ $branches = get_all('branches');
                             ?>
                         </select>
                         Loan Officer:
-                        <select name="user" id="officer" class="select2">
+                        <select name="user" id="report-filter-officer" class="select2">
                             <option value="">All Officers</option>
                             <?php
                             foreach ($users as $user){
@@ -43,6 +43,7 @@ $branches = get_all('branches');
                             }
                             ?>
                         </select>
+                        <?php $officer_select_id = 'report-filter-officer'; $this->load->view('reports/_relationship_supervisor_filter'); ?>
                         Loan Product:
                         <select name="product" id="product" class="select2">
                             <option value="">All Products</option>
@@ -54,6 +55,10 @@ $branches = get_all('branches');
                             }
                             ?>
                         </select>
+                        From Date:
+                        <input type="date" name="from_date" id="from_date" value="<?php echo isset($selected_from_date) ? $selected_from_date : ''; ?>">
+                        To Date:
+                        <input type="date" name="to_date" id="to_date" value="<?php echo isset($selected_to_date) ? $selected_to_date : ''; ?>">
                         <button type="submit" class="btn btn-primary">Generate Report</button>
                     </div>
                 </fieldset>
