@@ -225,64 +225,6 @@ class Loan_model extends CI_Model
     }
 
     /**
-     * Backward-compatible helper for list renderers that still call this method.
-     * Returns a display name for either individual or group borrowers.
-     */
-    public function resolve_customer_display_name($loan_row)
-    {
-        if (!$loan_row) {
-            return 'Unknown';
-        }
-
-        if (!empty($loan_row->customer_display_name)) {
-            return (string)$loan_row->customer_display_name;
-        }
-
-        if ((string)($loan_row->customer_type ?? '') === 'group') {
-            $group = get_by_id('groups', 'group_id', $loan_row->loan_customer);
-            if ($group) {
-                $group_name = trim((string)($group->group_name ?? ''));
-                $group_code = trim((string)($group->group_code ?? ''));
-                if ($group_name !== '' || $group_code !== '') {
-                    return $group_name . ($group_code !== '' ? '(' . $group_code . ')' : '');
-                }
-            }
-            return 'Unknown';
-        }
-
-        if ((string)($loan_row->customer_type ?? '') === 'individual') {
-            $customer = get_by_id('individual_customers', 'id', $loan_row->loan_customer);
-            if ($customer) {
-                $full_name = trim((string)($customer->Firstname ?? '') . ' ' . (string)($customer->Lastname ?? ''));
-                $client_id = trim((string)($customer->ClientId ?? ''));
-                if ($full_name !== '') {
-                    return $client_id !== '' ? $full_name . ' (' . $client_id . ')' : $full_name;
-                }
-                if ($client_id !== '') {
-                    return $client_id;
-                }
-            }
-        }
-
-        return !empty($loan_row->customer_nam) ? (string)$loan_row->customer_nam : 'Unknown';
-    }
-
-    /**
-     * Backward-compatible helper for legacy views that expect a preview URL resolver.
-     */
-    public function resolve_customer_preview_url($loan_row)
-    {
-        $customer_type = '';
-        if (is_object($loan_row) && isset($loan_row->customer_type)) {
-            $customer_type = strtolower(trim((string)$loan_row->customer_type));
-        }
-
-        return $customer_type === 'group'
-            ? 'Customer_groups/members/'
-            : 'Individual_customers/view/';
-    }
-
-    /**
      * Atomically generate a unique (loanid, counter) pair.
      *
      * Uses MySQL's GET_LOCK() to serialise access so that concurrent
@@ -5250,7 +5192,7 @@ class Loan_model extends CI_Model
 
 
     }
-function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_term, $start_date, $loan_customer, $customer_type, $worthness_file, $narration, $added_by, $branch, $funds_source = null, $batch = null, $from_group = 'No', $group_id = null) {
+function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_term, $start_date, $loan_customer, $customer_type, $worthness_file, $narration, $added_by, $funds_source = null, $batch = null, $from_group = 'No', $group_id = null) {
   $loan_num_data = $this->generate_loan_number();
   $loanid   = $loan_num_data['loanid'];
   $fcounter = $loan_num_data['fcounter'];
@@ -5386,7 +5328,7 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
   $this->db->insert('account', $data_account);
   return $id;
 }
-    function add_amortization_straight_weekly($principal,$loan_amount, $product_id, $loan_term, $start_date,$loan_customer, $customer_type, $worthness_file,$narration,$added_by, $branch, $funds_source = null, $batch = null, $from_group = 'No', $group_id = null) {
+    function add_amortization_straight_weekly($principal,$loan_amount, $product_id, $loan_term, $start_date,$loan_customer, $customer_type, $worthness_file,$narration,$added_by, $funds_source = null, $batch = null, $from_group = 'No', $group_id = null) {
 		$loan_num_data = $this->generate_loan_number();
 		$loanid   = $loan_num_data['loanid'];
 		$fcounter = $loan_num_data['fcounter'];
@@ -7708,9 +7650,6 @@ $this->db->where('payment_number',$i);
                         }
 
                         $newdate = date('Y-m-d', $newdate_ts);
-                        $schedule_date = $is_masamba_promotion
-                            ? $this->build_masamba_promotion_schedule_date($loan_date, $ii)
-                            : $newdate;
                         $this->db->where('loan_id',$id);
                         $this->db->where('payment_number',$ii);
                         $this->db->update(

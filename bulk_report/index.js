@@ -6,7 +6,6 @@ const moment = require('moment');
 const fs = require('fs');
 const path= require('path');
 const { processBatchLoanDateUpdate } = require('./loanDateBatchEditor');
-const { computeAndStorePortfolioDashboard, getLatestPortfolioDashboard } = require('./portfolioDashboard');
 const { generateLoanPortfolioReport } = require('./loanPortfolioReport');
 const { generateLoanPortfolioWriteOffReport } = require('./loanPortfolioWriteOffReport');
 const { generateLoanCollectionsReport } = require('./loanCollectionReport');
