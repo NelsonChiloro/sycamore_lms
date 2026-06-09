@@ -17,6 +17,46 @@ class Loan_model extends CI_Model
 	}
 
 	/**
+	 * Open loan statuses used when enforcing one loan per customer per product.
+	 */
+	public function get_open_loan_statuses()
+	{
+		return array('INITIATED', 'RECOMMENDED', 'APPROVED', 'ACTIVE');
+	}
+
+	/**
+	 * Returns an open loan for the customer and product, if any.
+	 *
+	 * @param string|int $loan_customer
+	 * @param string $customer_type
+	 * @param int|string $product_id loan_products.loan_product_id
+	 * @param array|null $statuses
+	 * @return object|null
+	 */
+	public function get_customer_open_loan_for_product($loan_customer, $customer_type, $product_id, $statuses = null)
+	{
+		if ($statuses === null) {
+			$statuses = $this->get_open_loan_statuses();
+		}
+
+		if (empty($loan_customer) || empty($product_id) || empty($statuses)) {
+			return null;
+		}
+
+		$this->db->select('*')
+			->from($this->table)
+			->where('loan_customer', $loan_customer)
+			->where('loan_product', (int)$product_id)
+			->where_in('loan_status', $statuses);
+
+		if ($customer_type !== null && $customer_type !== '') {
+			$this->db->where('customer_type', $customer_type);
+		}
+
+		return $this->db->order_by($this->id, $this->order)->limit(1)->get()->row();
+	}
+
+	/**
 	 * Ensure schedule date is unique for this loan (prevents duplicate months - Issue 2)
 	 */
 	private function _ensure_schedule_date_unique($loan_id, $date) {
@@ -64,6 +104,23 @@ class Loan_model extends CI_Model
         return $fallback;
     }
 
+    /**
+     * Use frequency from the selected loan_products row (source of truth).
+     */
+    private function resolve_frequency_for_loan_edit($loan_id, $product_id, $product_frequency, $period_type_override = null)
+    {
+        $from_product = $this->normalize_frequency_label($product_frequency);
+        if ($from_product !== '') {
+            return $from_product;
+        }
+
+        if ($period_type_override !== null && $period_type_override !== '') {
+            return $this->normalize_frequency_label($period_type_override);
+        }
+
+        return $this->resolve_effective_frequency_for_existing_loan($loan_id, $product_frequency);
+    }
+
     private function normalize_numeric_value($value)
     {
         if (is_int($value) || is_float($value)) {
@@ -88,6 +145,32 @@ class Loan_model extends CI_Model
         }
 
         return (float)$normalized;
+    }
+
+    /**
+     * Amortized installment; avoids division by zero when period or total rate is zero.
+     */
+    private function calculate_amortized_installment($amount, $months, $total_deduction)
+    {
+        $amount = (float) $amount;
+        $months = (int) $months;
+        $total_deduction = (float) $total_deduction;
+
+        if ($months <= 0 || $amount <= 0) {
+            return 0.0;
+        }
+
+        if ($total_deduction <= 0) {
+            return $amount / $months;
+        }
+
+        $rate = $total_deduction / 12;
+        $denominator = pow(1 + $rate, $months) - 1;
+        if ($denominator <= 0) {
+            return $amount / $months;
+        }
+
+        return $amount * $rate * pow(1 + $rate, $months) / $denominator;
     }
 
     private function normalize_date_value($value)
@@ -390,6 +473,64 @@ class Loan_model extends CI_Model
         ), true);
 
         return $name_matches || $code_matches;
+    }
+
+    /**
+     * Any loan product whose name/code identifies as Zitsamba (group or individual).
+     */
+    private function is_zitsamba_product($loan)
+    {
+        if (!$loan) {
+            return false;
+        }
+
+        if ($this->is_group_zitsamba_monthly_flat_product($loan)) {
+            return true;
+        }
+
+        $product_name = strtoupper(trim((string) ($loan->product_name ?? '')));
+        $product_code = strtoupper(trim((string) ($loan->product_code ?? '')));
+        $normalized_name = preg_replace('/[^A-Z0-9]/', '', $product_name);
+
+        if (strpos($normalized_name, 'ZITSAMBA') !== false) {
+            return true;
+        }
+
+        return (bool) preg_match('/ZITSAMBA/i', $product_code);
+    }
+
+    private function is_zitsamba_biweekly_product($loan)
+    {
+        if (!$this->is_zitsamba_product($loan)) {
+            return false;
+        }
+
+        return $this->normalize_frequency_label($loan->frequency ?? '') === 'Bi weekly';
+    }
+
+    /**
+     * Zitsamba bi-weekly: first repayment 14 days after loan date, then every 14 days.
+     * Sundays roll forward to Monday for that installment only.
+     */
+    private function build_zitsamba_biweekly_schedule_date($loan_date, $installment_number)
+    {
+        $loan_date = $this->normalize_date_value($loan_date);
+        $installment_number = max(1, (int) $installment_number);
+
+        $payment_date = new DateTime($loan_date);
+        $payment_date->modify('+' . ($installment_number * 14) . ' days');
+
+        return $this->adjust_zitsamba_biweekly_schedule_date_for_sunday($payment_date->format('Y-m-d'));
+    }
+
+    private function adjust_zitsamba_biweekly_schedule_date_for_sunday($date)
+    {
+        $payment_date = new DateTime($date);
+        if ((int) $payment_date->format('N') === 7) {
+            $payment_date->modify('+1 day');
+        }
+
+        return $payment_date->format('Y-m-d');
     }
 
     private function build_group_zitsamba_flat_terms($principal, $requested_months, $processing_fee_percent = 32)
@@ -4978,11 +5119,13 @@ class Loan_model extends CI_Model
         // Initialize the amortization schedule array
         $amortization_schedule = array();
 
+        $use_zitsamba_biweekly = ($frequency === 'Bi weekly' && $this->is_zitsamba_biweekly_product($loan));
+
         // Initialize the payment date to the given start date
         $payment_date = new DateTime($start_date);
         if ($frequency === 'Monthly') {
             $payment_date = new DateTime($this->build_month_end_schedule_date($start_date, 0));
-        } else {
+        } elseif (!$use_zitsamba_biweekly) {
             $payment_date->modify('+' . $period_interval_weeks . ' weeks');
         }
 
@@ -5027,10 +5170,13 @@ class Loan_model extends CI_Model
         $this->db->where('loan_id',$lidd)->delete('payement_schedules');
 
         for ($i = 1; $i <= $num_payments; $i++) {
-            // Keep month-end dates intact for monthly schedules.
-            if ($frequency !== 'Monthly' && $payment_date->format('N') >= 6) {
-                // If so, adjust the payment date to the next available weekday (Monday)
-                $payment_date->modify('next monday');
+            if ($use_zitsamba_biweekly) {
+                $schedule_date = $this->build_zitsamba_biweekly_schedule_date($start_date, $i);
+            } else {
+                if ($frequency !== 'Monthly' && $payment_date->format('N') >= 6) {
+                    $payment_date->modify('next monday');
+                }
+                $schedule_date = $payment_date->format('Y-m-d');
             }
 
             // Calculate installment split using opening balance for this period.
@@ -5045,7 +5191,7 @@ class Loan_model extends CI_Model
             // Add the payment details to the amortization schedule array
             $amortization_schedule[] = array(
                 'payment_number' => $i,
-                'payment_date' => $payment_date->format('Y-m-d'),
+                'payment_date' => $schedule_date,
                 'payment_amount' => $payment_amount+$weekly_addend,
                 'interest_amount' => $interest_payment,
                 'principal_amount' => $principal_payment,
@@ -5070,7 +5216,7 @@ class Loan_model extends CI_Model
                     'customer' => $loan_customer,
                     'customer_type' => $customer_type,
                     'loan_id' => $id,
-                    'payment_schedule' => $payment_date->format('Y-m-d'),
+                    'payment_schedule' => $schedule_date,
                     'payment_number' => $i,
                     'amount' => $payment_amount,
                     'principal' => $principal_payment,
@@ -5088,7 +5234,9 @@ class Loan_model extends CI_Model
 
 
 
-            if ($frequency === 'Monthly') {
+            if ($use_zitsamba_biweekly) {
+                // Dates are computed per installment.
+            } elseif ($frequency === 'Monthly') {
                 $payment_date->modify('first day of next month');
                 $payment_date->modify('last day of this month');
             } else {
@@ -5102,7 +5250,7 @@ class Loan_model extends CI_Model
 
 
     }
-function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_term, $start_date, $loan_customer, $customer_type, $worthness_file, $narration, $added_by, $funds_source = null, $batch = null, $from_group = 'No', $group_id = null) {
+function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_term, $start_date, $loan_customer, $customer_type, $worthness_file, $narration, $added_by, $branch, $funds_source = null, $batch = null, $from_group = 'No', $group_id = null) {
   $loan_num_data = $this->generate_loan_number();
   $loanid   = $loan_num_data['loanid'];
   $fcounter = $loan_num_data['fcounter'];
@@ -5134,9 +5282,11 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
   // Initialize the amortization schedule array
   $amortization_schedule = array();
 
-  // Initialize the payment date to the given start date
+  $use_zitsamba_biweekly = $this->is_zitsamba_biweekly_product($loan);
   $payment_date = new DateTime($start_date);
-  $payment_date->modify('+2 weeks'); // First payment after 2 weeks
+  if (!$use_zitsamba_biweekly) {
+      $payment_date->modify('+2 weeks');
+  }
 
   // Prepare loan data for insertion
   $data = array(
@@ -5161,6 +5311,7 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
    'next_payment_id' => 1,
    'loan_added_by' => $added_by,
    'counter' => $fcounter,
+   'branch' => $branch,
    'funds_source' => $funds_source,
    'batch' => $batch,
    'from_group' => $from_group,
@@ -5173,10 +5324,13 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
 
   // Create payment schedules
   for ($i = 1; $i <= $num_payments; $i++) {
-   // Check if the payment date falls on a weekend
-   if ($payment_date->format('N') >= 6) {
-    // Adjust to the next Monday
-    $payment_date->modify('next monday');
+   if ($use_zitsamba_biweekly) {
+    $schedule_date = $this->build_zitsamba_biweekly_schedule_date($start_date, $i);
+   } else {
+    if ($payment_date->format('N') >= 6) {
+     $payment_date->modify('next monday');
+    }
+    $schedule_date = $payment_date->format('Y-m-d');
    }
 
    // Calculate the remaining loan balance
@@ -5189,7 +5343,7 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
    // Add the payment details to the amortization schedule
    $amortization_schedule[] = array(
     'payment_number' => $i,
-    'payment_date' => $payment_date->format('Y-m-d'),
+    'payment_date' => $schedule_date,
     'payment_amount' => $payment_amount + $biweekly_addend,
     'interest_amount' => $interest_payment,
     'principal_amount' => $principal_payment,
@@ -5202,7 +5356,7 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
      'customer' => $loan_customer,
      'customer_type' => $customer_type,
      'loan_id' => $id,
-     'payment_schedule' => $payment_date->format('Y-m-d'),
+     'payment_schedule' => $schedule_date,
      'payment_number' => $i,
      'amount' => $payment_amount,
      'principal' => $principal_payment,
@@ -5215,8 +5369,9 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
     )
    );
 
-   // Move the payment date to the next two weeks
-   $payment_date->modify('+2 weeks');
+   if (!$use_zitsamba_biweekly) {
+    $payment_date->modify('+2 weeks');
+   }
   }
 
   // Create account record
@@ -5231,7 +5386,7 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
   $this->db->insert('account', $data_account);
   return $id;
 }
-    function add_amortization_straight_weekly($principal,$loan_amount, $product_id, $loan_term, $start_date,$loan_customer, $customer_type, $worthness_file,$narration,$added_by, $funds_source = null, $batch = null, $from_group = 'No', $group_id = null) {
+    function add_amortization_straight_weekly($principal,$loan_amount, $product_id, $loan_term, $start_date,$loan_customer, $customer_type, $worthness_file,$narration,$added_by, $branch, $funds_source = null, $batch = null, $from_group = 'No', $group_id = null) {
 		$loan_num_data = $this->generate_loan_number();
 		$loanid   = $loan_num_data['loanid'];
 		$fcounter = $loan_num_data['fcounter'];
@@ -5298,6 +5453,7 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
 			'next_payment_id' => 1,
 			'loan_added_by' => $added_by,
 			'counter' => $fcounter,
+			'branch' => $branch,
 			'funds_source' => $funds_source,
 			'batch' => $batch,
 			'from_group' => $from_group,
@@ -5667,45 +5823,37 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
 		// Create payment schedules using reducing balance calculation with bi-weekly frequency
 		$current_balance = $amount;
 		$payment_counter = 1;
+		$use_zitsamba_biweekly = $this->is_zitsamba_biweekly_product($loan);
 		$date = $loan_date;
-		$loan_day = date('d', strtotime($date));
-		$loan_month = date('m', strtotime($date));
 
-		// Get first payment day if 15 or 30
-		if ($loan_day >= 15) {
-			if ($loan_month == '02') {
-				$start_day = 28;
+		if (!$use_zitsamba_biweekly) {
+			$loan_day = date('d', strtotime($date));
+			$loan_month = date('m', strtotime($date));
+
+			if ($loan_day >= 15) {
+				$start_day = ($loan_month == '02') ? 28 : 30;
 			} else {
-				$start_day = 30;
+				$start_day = 15;
 			}
-		} elseif ($loan_day == 30 or $loan_day > 15) {
-			$start_day = 15;
-		} else {
-			$start_day = 15;
-		}
 
-		$date = date('Y/m/' . $start_day, strtotime($date));
+			$date = date('Y/m/' . $start_day, strtotime($date));
 
-		// Add grace period (skip one payment period for bi-weekly)
-		if ($start_day == 15) {
-			// If first payment was 15th, move to 30th/28th
-			if (date('m', strtotime($date)) == '02') {
-				$date = date('Y/02/28', strtotime($date));
+			if ($start_day == 15) {
+				if (date('m', strtotime($date)) == '02') {
+					$date = date('Y/02/28', strtotime($date));
+				} else {
+					$date = date('Y/m/30', strtotime($date));
+				}
 			} else {
-				$date = date('Y/m/30', strtotime($date));
+				$date = date('Y/m/15', strtotime('+1 month', strtotime($date)));
 			}
-		} else {
-			// If first payment was 30th/28th, move to 15th of next month
-			$date = date('Y/m/15', strtotime('+1 month', strtotime($date)));
 		}
 
 		while ($current_balance > 0 && $payment_counter <= $months) {
-			// Calculate portions for each payment
 			$towards_interest = ($i / 12) * $current_balance;
 			$towards_fees1 = ($af / 12) * $current_balance;
 			$towards_lc1 = ($lc / 12) * $current_balance;
 
-			// Adjust last payment if needed
 			if ($monthly_payment > $current_balance) {
 				$monthly_payment_actual = $current_balance + $towards_interest + $towards_fees1 + $towards_lc1;
 			} else {
@@ -5715,16 +5863,16 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
 			$towards_balance = $monthly_payment_actual - ($towards_interest + $towards_fees1 + $towards_lc1);
 			$current_balance = $current_balance - $towards_balance;
 
-			// Roll Sunday to Monday (7 = Sunday in date('N'))
-			$schedule_date = $date;
-			if (date('N', strtotime($date)) == 7) {
-				$schedule_date = date('Y-m-d', strtotime('+1 day', strtotime($date)));
+			if ($use_zitsamba_biweekly) {
+				$schedule_date = $this->build_zitsamba_biweekly_schedule_date($loan_date, $payment_counter);
 			} else {
-				$schedule_date = date('Y-m-d', strtotime($date));
+				$schedule_date = $date;
+				if (date('N', strtotime($date)) == 7) {
+					$schedule_date = date('Y-m-d', strtotime('+1 day', strtotime($date)));
+				}
 			}
 			$schedule_date = $this->_ensure_schedule_date_unique($id, $schedule_date);
 
-			// Insert payment schedule
 			$this->db->insert(
 				'payement_schedules', array(
 					'customer' => $loan_customer,
@@ -5743,21 +5891,20 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
 				)
 			);
 
-			// Calculate next payment date (bi-weekly: 15th and 30th/28th)
-			$day = date('d', strtotime($date));
-			if ($day == 15) {
-				// Check if February
-				if (date('m', strtotime($date)) == '02') {
-					$date = date('Y/02/28', strtotime($date));
-				} else {
-					$date = date('Y/m/30', strtotime($date));
-				}
-			} elseif ($day == 30 or $day > 15) {
-				// Check if January, going to February
-				if (date('m', strtotime($date)) == '01') {
-					$date = date('Y/02/15', strtotime('+1 month', strtotime($date)));
-				} else {
-					$date = date('Y/m/15', strtotime('+1 month', strtotime($date)));
+			if (!$use_zitsamba_biweekly) {
+				$day = date('d', strtotime($date));
+				if ($day == 15) {
+					if (date('m', strtotime($date)) == '02') {
+						$date = date('Y/02/28', strtotime($date));
+					} else {
+						$date = date('Y/m/30', strtotime($date));
+					}
+				} elseif ($day == 30 or $day > 15) {
+					if (date('m', strtotime($date)) == '01') {
+						$date = date('Y/02/15', strtotime('+1 month', strtotime($date)));
+					} else {
+						$date = date('Y/m/15', strtotime('+1 month', strtotime($date)));
+					}
 				}
 			}
 
@@ -5825,11 +5972,13 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
         // Initialize the amortization schedule array
         $amortization_schedule = array();
 
+        $use_zitsamba_biweekly = ($frequency === 'Bi weekly' && $this->is_zitsamba_biweekly_product($loan));
+
         // Initialize the payment date to the given start date
         $payment_date = new DateTime($start_date);
         if ($frequency === 'Monthly') {
             $payment_date->modify('last day of this month');
-        } else {
+        } elseif (!$use_zitsamba_biweekly) {
             $payment_date->modify('+' . $period_interval_weeks . ' weeks');
         }
 
@@ -5866,10 +6015,13 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
         $this->db->update($this->table, $data);
 
         for ($i = 1; $i <= $num_payments; $i++) {
-            // Keep month-end dates intact for monthly schedules.
-            if ($frequency !== 'Monthly' && $payment_date->format('N') >= 6) {
-                // If so, adjust the payment date to the next available weekday (Monday)
-                $payment_date->modify('next monday');
+            if ($use_zitsamba_biweekly) {
+                $schedule_date = $this->build_zitsamba_biweekly_schedule_date($start_date, $i);
+            } else {
+                if ($frequency !== 'Monthly' && $payment_date->format('N') >= 6) {
+                    $payment_date->modify('next monday');
+                }
+                $schedule_date = $payment_date->format('Y-m-d');
             }
 
             // Calculate installment split using opening balance for this period.
@@ -5884,7 +6036,7 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
             // Add the payment details to the amortization schedule array
             $amortization_schedule[] = array(
                 'payment_number' => $i,
-                'payment_date' => $payment_date->format('Y-m-d'),
+                'payment_date' => $schedule_date,
                 'payment_amount' => $payment_amount+$weekly_addend,
                 'interest_amount' => $interest_payment,
                 'principal_amount' => $principal_payment,
@@ -5897,7 +6049,7 @@ $this->db->where('payment_number',$i);
 
                     'customer' => $loan_customer,
                     'customer_type' => $customer_type,
-                    'payment_schedule' => $payment_date->format('Y-m-d'),
+                    'payment_schedule' => $schedule_date,
 
                     'payment_number' => $i,
                     'amount' => $payment_amount,
@@ -5907,18 +6059,26 @@ $this->db->where('payment_number',$i);
                     'ploan_cover' => 0,
                     'paid_amount' => 0,
                     'loan_balance' => $loan_balance,
-
+                    'status' => 'NOT PAID',
+                    'partial_paid' => 'NO',
+                    'paid_date' => null,
 
                 )
             );
 
-            if ($frequency === 'Monthly') {
+            if ($use_zitsamba_biweekly) {
+                // Dates are computed per installment.
+            } elseif ($frequency === 'Monthly') {
                 $payment_date->modify('first day of next month');
                 $payment_date->modify('last day of this month');
             } else {
                 $payment_date->modify('+' . $period_interval_weeks . ' weeks');
             }
         }
+
+        $this->db->where('loan_id', $loan_id)
+            ->where('payment_number >', (int) $num_payments)
+            ->delete('payement_schedules');
 
         return $loan_id;
 
@@ -5957,15 +6117,12 @@ $this->db->where('payment_number',$i);
         $loan_date = $this->normalize_date_value($ldate);
         $original_loan_date = $loan_date;
         $months = (int)$this->normalize_numeric_value($lmonths);
+        if ($months <= 0) {
+            throw new Exception('Loan period must be at least 1.');
+        }
         //get loan parameters
         $loan = $this->db->select("*")->from('loan_products')->where('loan_product_id',$product_id)->get()->row();
-        $loan->frequency = $this->normalize_frequency_label($loan->frequency);
-        if (!empty($period_type)) {
-            $loan->frequency = $this->normalize_frequency_label($period_type);
-        }
-        // Keep existing repayment frequency during edits when product defaults differ
-        // (e.g. legacy Masamba variants MasBT/MasLL that should remain weekly/bi-weekly).
-        $loan->frequency = $this->resolve_effective_frequency_for_existing_loan($lidd, $loan->frequency);
+        $loan->frequency = $this->resolve_frequency_for_loan_edit($lidd, $product_id, $loan->frequency, $period_type);
         $existing_loan = $this->db->select('branch')->from('loan')->where('loan_id', $lidd)->get()->row();
         $existing_branch = $existing_loan ? $existing_loan->branch : null;
         $is_masamba_promotion = $this->is_masamba_promotion_for_lingwe_blantyre($loan, $existing_branch);
@@ -6073,10 +6230,9 @@ $this->db->where('payment_number',$i);
             $lc = ($loan->loan_cover / 100) * 12;
             $total_deduction = $i + $af + $lc;
 
-
-            $monthly_payment = ($amount * ($total_deduction / 12) * pow((1 + $total_deduction / 12), $months) / (pow((1 + $total_deduction / 12), $months) - 1));
-            $monthly_payment1 = ($amount * ($total_deduction / 12) * pow((1 + $total_deduction / 12), $months) / (pow((1 + $total_deduction / 12), $months) - 1));
-            $monthly_payment_config = ($amount * ($total_deduction / 12) * pow((1 + $total_deduction / 12), $months) / (pow((1 + $total_deduction / 12), $months) - 1));
+            $monthly_payment = $this->calculate_amortized_installment($amount, $months, $total_deduction);
+            $monthly_payment1 = $monthly_payment;
+            $monthly_payment_config = $monthly_payment;
             $current_balance = $amount;
             $current_balance1 = $amount;
             $payment_counter = 1;
@@ -6164,62 +6320,63 @@ $this->db->where('payment_number',$i);
 
             //insert each payment records to lend_payments
             if ($loan->frequency == 'Bi weekly') {
-                $date = $loan_date;
                 $frequency = $months * 2;
-                $start_day = 0;
-                $loan_day = date('d', strtotime($date));
-                $loan_month = date('m', strtotime($date));
-
-                //get first payment day if 15 or 30
-                if ($loan_day >= 15) {
-                    if ($loan_month == '02') {
-                        $start_day = 28;
-                    } else {
-                        $start_day = 30;
+                $this->db->where('loan_id', $lidd)->delete('payement_schedules');
+                if ($this->is_zitsamba_biweekly_product($loan)) {
+                    for ($i = 1; $i <= $frequency; $i++) {
+                        $schedule_date = $this->build_zitsamba_biweekly_schedule_date($loan_date, $i);
+                        $this->db->insert(
+                            'payement_schedules', array(
+                                'customer' => $loan_customer,
+                                'loan_id' => $id,
+                                'payment_schedule' => $schedule_date,
+                                'payment_number' => $i,
+                                'amount' => $monthly_payment1,
+                                'principal' => $towards_balance1,
+                                'interest' => $total_interest1,
+                                'paid_amount' => 0,
+                                'loan_balance' => $current_balance1,
+                                'loan_date' => $loan_date,
+                            )
+                        );
                     }
-                } elseif ($loan_day == 30 or $loan_day > 15) {
-                    $start_day = 15;
                 } else {
-                    $start_day = 15;
-                }
+                    $date = $loan_date;
+                    $loan_day = date('d', strtotime($date));
+                    $loan_month = date('m', strtotime($date));
+                    $start_day = ($loan_day >= 15) ? (($loan_month == '02') ? 28 : 30) : 15;
+                    $date = date('Y/m/' . $start_day, strtotime($date));
+                    for ($i = 1; $i <= $frequency; $i++) {
+                        $this->db->insert(
+                            'payement_schedules', array(
+                                'customer' => $loan_customer,
+                                'loan_id' => $id,
+                                'payment_schedule' => $date,
+                                'payment_number' => $i,
+                                'amount' => $monthly_payment1,
+                                'principal' => $towards_balance1,
+                                'interest' => $total_interest1,
+                                'paid_amount' => 0,
+                                'loan_balance' => $current_balance1,
+                                'loan_date' => $loan_date,
+                            )
+                        );
 
-                $date = date('Y/m/' . $start_day, strtotime($date));
-                $this->db->where('loan_id',$lidd)->delete('payement_schedules');
-                for ($i = 1; $i <= $frequency; $i++) {
-                    $this->db->insert(
-                        'payement_schedules', array(
-
-                            'customer' => $loan_customer,
-                            'loan_id' => $id,
-                            'payment_schedule' => $date,
-                            'payment_number' => $i,
-                            'amount' => $monthly_payment1,
-                            'principal' => $towards_balance1,
-                            'interest' => $total_interest1,
-                            'paid_amount' => 0,
-                            'loan_balance' => $current_balance1,
-                            'loan_date' => $loan_date,
-
-                        )
-                    );
-
-                    $day = date('d', strtotime($date));
-                    if ($day == 15) {
-                        //check if February
-                        if (date('m', strtotime($date)) == '02') {
-                            $date = date('Y/02/28', strtotime($date));
-                        } else {
-                            $date = date('Y/m/30', strtotime($date));
-                        }
-                    } elseif ($day == 30 or $day > 15) {
-                        //check if January, going to February
-                        if (date('m', strtotime($date)) == '01') {
-                            $date = date('Y/02/15', strtotime('+1 month', strtotime($date)));
-                        } else {
-                            $date = date('Y/m/15', strtotime('+1 month', strtotime($date)));
+                        $day = date('d', strtotime($date));
+                        if ($day == 15) {
+                            if (date('m', strtotime($date)) == '02') {
+                                $date = date('Y/02/28', strtotime($date));
+                            } else {
+                                $date = date('Y/m/30', strtotime($date));
+                            }
+                        } elseif ($day == 30 or $day > 15) {
+                            if (date('m', strtotime($date)) == '01') {
+                                $date = date('Y/02/15', strtotime('+1 month', strtotime($date)));
+                            } else {
+                                $date = date('Y/m/15', strtotime('+1 month', strtotime($date)));
+                            }
                         }
                     }
-
                 }
             }
             elseif ($loan->frequency == 'Weekly') {
@@ -6456,6 +6613,16 @@ $this->db->where('payment_number',$i);
 
 	function add_loan($lamount, $lmonths, $product_id, $ldate,$loan_customer, $customer_type,$worthness_file,$narration,$added_by, $branch, $funds_source = null, $batch = null, $from_group = 'No', $group_id = null)
 	{
+		$pending_loan = $this->get_customer_open_loan_for_product(
+			$loan_customer,
+			$customer_type,
+			$product_id,
+			array('INITIATED', 'RECOMMENDED', 'APPROVED')
+		);
+		if ($pending_loan) {
+			throw new Exception('Customer already has an open loan for this loan product.');
+		}
+
 		//set Time Zone
 		//date_default_timezone_set('Africa/Blantyre');
 		// Generate a collision-safe loan number before sub-functions are dispatched.
@@ -6517,13 +6684,13 @@ $this->db->where('payment_number',$i);
 		if($loan->method=="Straight line" && $loan->frequency=="Weekly"){
 			$principal = (($loan->processing_fees/100)*$amount)+$amount;
 			$p = $amount;
-			return $this->add_amortization_straight_weekly($p,$principal, $product_id, $months, $loan_date,$loan_customer,$customer_type,$worthness_file,$narration,$added_by, $funds_source, $batch, $from_group, $group_id);
+			return $this->add_amortization_straight_weekly($p,$principal, $product_id, $months, $loan_date,$loan_customer,$customer_type,$worthness_file,$narration,$added_by, $branch, $funds_source, $batch, $from_group, $group_id);
 		}
         elseif($loan->method=="Straight line" && $loan->frequency=="Bi weekly")
         {
         $principal = (($loan->processing_fees/100)*$amount)+$amount;
         $p = $amount;
-        return $this->add_amortization_biweekly($p,$principal, $product_id, $months, $loan_date,$loan_customer,$customer_type,$worthness_file,$narration,$added_by, $funds_source, $batch, $from_group, $group_id);
+        return $this->add_amortization_biweekly($p,$principal, $product_id, $months, $loan_date,$loan_customer,$customer_type,$worthness_file,$narration,$added_by, $branch, $funds_source, $batch, $from_group, $group_id);
         }
         elseif($loan->method == "Reducing balance" && $loan->frequency == "Weekly")
         {
@@ -6749,62 +6916,69 @@ $this->db->where('payment_number',$i);
 
 			//insert each payment records to lend_payments
 			if ($loan->frequency == 'Bi weekly') {
-				$date = $loan_date;
-				$frequency = $months;  // Fixed: Don't multiply by 2 - months already represents bi-weekly periods
-				$start_day = 0;
-				$loan_day = date('d', strtotime($date));
-				$loan_month = date('m', strtotime($date));
-
-				//get first payment day if 15 or 30
-				if ($loan_day >= 15) {
-					if ($loan_month == '02') {
-						$start_day = 28;
-					} else {
-						$start_day = 30;
+				$frequency = $months;
+				if ($this->is_zitsamba_biweekly_product($loan)) {
+					for ($i = 1; $i <= $frequency; $i++) {
+						$schedule_date = $this->build_zitsamba_biweekly_schedule_date($loan_date, $i);
+						$this->db->insert(
+							'payement_schedules', array(
+								'customer' => $loan_customer,
+								'loan_id' => $id,
+								'payment_schedule' => $schedule_date,
+								'payment_number' => $i,
+								'amount' => $monthly_payment1,
+								'principal' => $towards_balance1,
+								'interest' => $total_interest1,
+								'paid_amount' => 0,
+								'loan_balance' => $current_balance1,
+								'loan_date' => $loan_date,
+							)
+						);
 					}
-				} elseif ($loan_day == 30 or $loan_day > 15) {
-					$start_day = 15;
 				} else {
-					$start_day = 15;
-				}
+					$date = $loan_date;
+					$start_day = 0;
+					$loan_day = date('d', strtotime($date));
+					$loan_month = date('m', strtotime($date));
 
-				$date = date('Y/m/' . $start_day, strtotime($date));
-				for ($i = 1; $i <= $frequency; $i++) {
-
-					$this->db->insert(
-						'payement_schedules', array(
-
-							'customer' => $loan_customer,
-							'loan_id' => $id,
-                            'payment_schedule' => date('Y-m-d', strtotime($date)),
-							'payment_number' => $i,
-							'amount' => $monthly_payment1,
-							'principal' => $towards_balance1,
-							'interest' => $total_interest1,
-							'paid_amount' => 0,
-							'loan_balance' => $current_balance1,
-							'loan_date' => $loan_date,
-
-						)
-					);
-
-					$day = date('d', strtotime($date));
-					if ($day == 15) {
-						//check if February
-						if (date('m', strtotime($date)) == '02') {
-							$date = date('Y/02/28', strtotime($date));
-						} else {
-							$date = date('Y/m/30', strtotime($date));
-						}
-					} elseif ($day == 30 or $day > 15) {
-						//check if January, going to February
-						if (date('m', strtotime($date)) == '01') {
-							$date = date('Y/02/15', strtotime('+1 month', strtotime($date)));
-						} else {
-							$date = date('Y/m/15', strtotime('+1 month', strtotime($date)));
-						}
+					if ($loan_day >= 15) {
+						$start_day = ($loan_month == '02') ? 28 : 30;
+					} else {
+						$start_day = 15;
 					}
 
+					$date = date('Y/m/' . $start_day, strtotime($date));
+					for ($i = 1; $i <= $frequency; $i++) {
+						$this->db->insert(
+							'payement_schedules', array(
+								'customer' => $loan_customer,
+								'loan_id' => $id,
+								'payment_schedule' => date('Y-m-d', strtotime($date)),
+								'payment_number' => $i,
+								'amount' => $monthly_payment1,
+								'principal' => $towards_balance1,
+								'interest' => $total_interest1,
+								'paid_amount' => 0,
+								'loan_balance' => $current_balance1,
+								'loan_date' => $loan_date,
+							)
+						);
+
+						$day = date('d', strtotime($date));
+						if ($day == 15) {
+							if (date('m', strtotime($date)) == '02') {
+								$date = date('Y/02/28', strtotime($date));
+							} else {
+								$date = date('Y/m/30', strtotime($date));
+							}
+						} elseif ($day == 30 or $day > 15) {
+							if (date('m', strtotime($date)) == '01') {
+								$date = date('Y/02/15', strtotime('+1 month', strtotime($date)));
+							} else {
+								$date = date('Y/m/15', strtotime('+1 month', strtotime($date)));
+							}
+						}
+					}
 				}
 			}
 			elseif ($loan->frequency == 'Weekly') {
@@ -7076,8 +7250,7 @@ $this->db->where('payment_number',$i);
         $months = (int)$this->normalize_numeric_value($lmonths);
         //get loan parameters
         $loan = $this->db->select("*")->from('loan_products')->where('loan_product_id',$product_id)->get()->row();
-        $loan->frequency = $this->normalize_frequency_label($loan->frequency);
-        $loan->frequency = $this->resolve_effective_frequency_for_existing_loan($loan_id, $loan->frequency);
+        $loan->frequency = $this->resolve_frequency_for_loan_edit($loan_id, $product_id, $loan->frequency, null);
         $existing_loan = $this->db->select('branch')->from('loan')->where('loan_id', $loan_id)->get()->row();
         $existing_branch = $existing_loan ? $existing_loan->branch : null;
         $is_masamba_promotion = $this->is_masamba_promotion_for_lingwe_blantyre($loan, $existing_branch);
@@ -7272,63 +7445,60 @@ $this->db->where('payment_number',$i);
 
             //insert each payment records to lend_payments
             if ($loan->frequency == 'Bi weekly') {
-                $date = $loan_date;
                 $frequency = $months * 2;
-                $start_day = 0;
-                $loan_day = date('d', strtotime($date));
-                $loan_month = date('m', strtotime($date));
-
-                //get first payment day if 15 or 30
-                if ($loan_day >= 15) {
-                    if ($loan_month == '02') {
-                        $start_day = 28;
-                    } else {
-                        $start_day = 30;
+                if ($this->is_zitsamba_biweekly_product($loan)) {
+                    for ($i = 1; $i <= $frequency; $i++) {
+                        $schedule_date = $this->build_zitsamba_biweekly_schedule_date($loan_date, $i);
+                        $this->db->where('loan_id', $id);
+                        $this->db->where('payment_number', $i);
+                        $this->db->update(
+                            'payement_schedules', array(
+                                'customer' => $loan_customer,
+                                'loan_id' => $id,
+                                'payment_schedule' => $schedule_date,
+                                'amount' => $monthly_payment1,
+                                'principal' => $towards_balance1,
+                                'interest' => $total_interest1,
+                                'loan_balance' => $current_balance1,
+                            )
+                        );
                     }
-                } elseif ($loan_day == 30 or $loan_day > 15) {
-                    $start_day = 15;
                 } else {
-                    $start_day = 15;
-                }
+                    $date = $loan_date;
+                    $loan_day = date('d', strtotime($date));
+                    $loan_month = date('m', strtotime($date));
+                    $start_day = ($loan_day >= 15) ? (($loan_month == '02') ? 28 : 30) : 15;
+                    $date = date('Y/m/' . $start_day, strtotime($date));
+                    for ($i = 1; $i <= $frequency; $i++) {
+                        $this->db->where('loan_id', $id);
+                        $this->db->where('payment_number', $i);
+                        $this->db->update(
+                            'payement_schedules', array(
+                                'customer' => $loan_customer,
+                                'loan_id' => $id,
+                                'payment_schedule' => $date,
+                                'amount' => $monthly_payment1,
+                                'principal' => $towards_balance1,
+                                'interest' => $total_interest1,
+                                'loan_balance' => $current_balance1,
+                            )
+                        );
 
-                $date = date('Y/m/' . $start_day, strtotime($date));
-                for ($i = 1; $i <= $frequency; $i++) {
-                    $this->db->where('loan_id',$id);
-                    $this->db->where('payment_number',$i);
-                    $this->db->update(
-                        'payement_schedules', array(
-
-                            'customer' => $loan_customer,
-                            'loan_id' => $id,
-                            'payment_schedule' => $date,
-
-                            'amount' => $monthly_payment1,
-                            'principal' => $towards_balance1,
-                            'interest' => $total_interest1,
-
-                            'loan_balance' => $current_balance1,
-
-
-                        )
-                    );
-
-                    $day = date('d', strtotime($date));
-                    if ($day == 15) {
-                        //check if February
-                        if (date('m', strtotime($date)) == '02') {
-                            $date = date('Y/02/28', strtotime($date));
-                        } else {
-                            $date = date('Y/m/30', strtotime($date));
-                        }
-                    } elseif ($day == 30 or $day > 15) {
-                        //check if January, going to February
-                        if (date('m', strtotime($date)) == '01') {
-                            $date = date('Y/02/15', strtotime('+1 month', strtotime($date)));
-                        } else {
-                            $date = date('Y/m/15', strtotime('+1 month', strtotime($date)));
+                        $day = date('d', strtotime($date));
+                        if ($day == 15) {
+                            if (date('m', strtotime($date)) == '02') {
+                                $date = date('Y/02/28', strtotime($date));
+                            } else {
+                                $date = date('Y/m/30', strtotime($date));
+                            }
+                        } elseif ($day == 30 or $day > 15) {
+                            if (date('m', strtotime($date)) == '01') {
+                                $date = date('Y/02/15', strtotime('+1 month', strtotime($date)));
+                            } else {
+                                $date = date('Y/m/15', strtotime('+1 month', strtotime($date)));
+                            }
                         }
                     }
-
                 }
             }
             elseif ($loan->frequency == 'Weekly') {
@@ -7738,62 +7908,62 @@ $this->db->where('payment_number',$i);
 
 		//insert each payment records to lend_payments
 		if($loan->frequency == 'Bi weekly') {
-			$date = $loan_date;
-			$frequency = $months*2;
-			$start_day = 0;
-			$loan_day = date('d', strtotime($date));
-			$loan_month = date('m', strtotime($date));
-
-			//get first payment day if 15 or 30
-			if($loan_day >= 15) {
-				if($loan_month == '02') {
-					$start_day = 28;
-				} else {
-					$start_day = 30;
+			$frequency = $months * 2;
+			if ($this->is_zitsamba_biweekly_product($loan)) {
+				for ($i = 1; $i <= $frequency; $i++) {
+					$schedule_date = $this->build_zitsamba_biweekly_schedule_date($loan_date, $i);
+					$this->db->insert(
+						'payement_schedules', array(
+							'customer' => $loan_customer,
+							'loan_id' => $id,
+							'payment_schedule' => $schedule_date,
+							'payment_number' => $i,
+							'amount' => $monthly_payment1,
+							'principal' => $towards_balance1,
+							'interest' => $total_interest1,
+							'paid_amount' => 0,
+							'loan_balance' => $current_balance1,
+							'loan_date' => $loan_date,
+						)
+					);
 				}
-			} elseif($loan_day == 30 OR $loan_day > 15) {
-				$start_day = 15;
 			} else {
-				$start_day = 15;
-			}
+				$date = $loan_date;
+				$loan_day = date('d', strtotime($date));
+				$loan_month = date('m', strtotime($date));
+				$start_day = ($loan_day >= 15) ? (($loan_month == '02') ? 28 : 30) : 15;
+				$date = date('Y/m/' . $start_day, strtotime($date));
+				for ($i = 1; $i <= $frequency; $i++) {
+					$this->db->insert(
+						'payement_schedules', array(
+							'customer' => $loan_customer,
+							'loan_id' => $id,
+							'payment_schedule' => $date,
+							'payment_number' => $i,
+							'amount' => $monthly_payment1,
+							'principal' => $towards_balance1,
+							'interest' => $total_interest1,
+							'paid_amount' => 0,
+							'loan_balance' => $current_balance1,
+							'loan_date' => $loan_date,
+						)
+					);
 
-			$date = date('Y/m/'.$start_day, strtotime($date));
-			for ($i=1; $i<=$frequency; $i++) {
-
-				$this->db->insert(
-					'payement_schedules', array(
-
-						'customer' => $loan_customer,
-						'loan_id' => $id,
-						'payment_schedule' => $date,
-						'payment_number' => $i,
-						'amount' => $monthly_payment1,
-						'principal' => $towards_balance1,
-						'interest' => $total_interest1,
-						'paid_amount' => 0,
-						'loan_balance' => $current_balance1,
-						'loan_date' => $loan_date,
-
-					)
-				);
-
-				$day = date('d', strtotime($date));
-				if($day == 15) {
-					//check if February
-					if(date('m', strtotime($date)) == '02') {
-						$date = date('Y/02/28', strtotime($date));
-					} else {
-						$date = date('Y/m/30', strtotime($date));
-					}
-				} elseif($day == 30 OR $day > 15) {
-					//check if January, going to February
-					if(date('m', strtotime($date)) == '01') {
-						$date = date('Y/02/15', strtotime('+1 month', strtotime($date)));
-					} else {
-						$date = date('Y/m/15', strtotime('+1 month', strtotime($date)));
+					$day = date('d', strtotime($date));
+					if ($day == 15) {
+						if (date('m', strtotime($date)) == '02') {
+							$date = date('Y/02/28', strtotime($date));
+						} else {
+							$date = date('Y/m/30', strtotime($date));
+						}
+					} elseif ($day == 30 or $day > 15) {
+						if (date('m', strtotime($date)) == '01') {
+							$date = date('Y/02/15', strtotime('+1 month', strtotime($date)));
+						} else {
+							$date = date('Y/m/15', strtotime('+1 month', strtotime($date)));
+						}
 					}
 				}
-
 			}
 		}
 		elseif($loan->frequency == 'Weekly') {
@@ -8272,7 +8442,7 @@ $this->db->where('payment_number',$i);
         // Pre-join borrower + branch so list views avoid N+1 queries per row (track, restructure, repayment, etc.)
         $this->db->select("loan.*, loan_products.product_name, loan_products.product_code,
             employees.Firstname AS efname, employees.Lastname AS elname, loan.branch AS loan_branch,
-            branch_row.BranchName AS branch_display_name,
+            " . $this->sql_loan_branch_display_name_expr() . ",
             CASE
                 WHEN LOWER(TRIM(COALESCE(loan.customer_type, ''))) IN ('group', 'groups') THEN COALESCE(
                     NULLIF(CONCAT(COALESCE(borrower_grp.group_name, ''), '(', COALESCE(borrower_grp.group_code, ''), ')'), '()'),
@@ -8312,12 +8482,12 @@ $this->db->where('payment_number',$i);
             END AS customer_display_name,
             COALESCE(funds_source.source_name, 'N/A') AS funds_source_name,
             COALESCE(CONCAT(linked_member_grp.group_name, ' (', linked_member_grp.group_code, ')'), 'N/A') AS customer_group_name,
-            COALESCE(loan.batch, 'N/A') AS batch_number", false)
+            COALESCE(loan.batch, 'N/A') AS batch_number,
+            " . sql_loan_rbm_classification_expr() . " AS rbm_classification", false)
 			->from($this->table)
 			->join('loan_products', 'loan_products.loan_product_id = loan.loan_product')
             ->join('employees', 'employees.id = loan.loan_added_by')
             ->join('funds_source', 'funds_source.funds_source = loan.funds_source', 'left')
-            ->join('branches branch_row', 'branch_row.id = loan.branch', 'left')
             ->join('groups linked_member_grp', 'linked_member_grp.group_id = loan.group_id AND loan.from_group = "Yes"', 'left')
             ->join('groups borrower_grp', "borrower_grp.group_id = loan.loan_customer AND LOWER(TRIM(COALESCE(loan.customer_type, ''))) IN ('group', 'groups')", 'left')
             ->join('individual_customers borrower_ic', "borrower_ic.id = loan.loan_customer AND LOWER(TRIM(COALESCE(loan.customer_type, ''))) IN ('individual', 'member')", 'left');
@@ -8390,7 +8560,7 @@ $this->db->where('payment_number',$i);
 	{
 		$this->db->select("loan.*, loan_products.product_name, loan_products.product_code,
 			loan.branch AS loan_branch,
-			branch_row.BranchName AS branch_display_name,
+			" . $this->sql_loan_branch_display_name_expr() . ",
 			employees.Firstname AS efname, employees.Lastname AS elname,
 			CONCAT(TRIM(CONCAT(COALESCE(individual_customers.Firstname, ''), ' ', COALESCE(individual_customers.Lastname, ''))), IF(COALESCE(individual_customers.ClientId, '') <> '', CONCAT(' (', individual_customers.ClientId, ')'), '')) AS customer_display_name,
 			COALESCE(funds_source.source_name, 'N/A') AS funds_source_name,
@@ -8401,8 +8571,7 @@ $this->db->where('payment_number',$i);
 			->join('individual_customers', 'individual_customers.id = loan.loan_customer')
 			->join('employees', 'employees.id = loan.loan_added_by', 'left')
 			->join('funds_source', 'funds_source.funds_source = loan.funds_source', 'left')
-			->join('groups member_grp', 'member_grp.group_id = loan.group_id AND loan.from_group = "Yes"', 'left')
-			->join('branches branch_row', 'branch_row.id = loan.branch', 'left');
+			->join('groups member_grp', 'member_grp.group_id = loan.group_id AND loan.from_group = "Yes"', 'left');
 		if($user !=""){
 			$this->db->where('loan_added_by',$user);
 		}
@@ -8546,7 +8715,7 @@ $this->db->where('payment_number',$i);
 
 		return FALSE;
 	}
-    function get_filter($user,$branch,$branchgp,$product,$status,$from,$to)
+    function get_filter($user, $branch, $branchgp, $product, $status, $from, $to, $loan_number = '')
 	{
         $deletestatus='';
 		$this->db->select("*, 
@@ -8566,7 +8735,8 @@ $this->db->where('payment_number',$i);
 		COALESCE(funds_source.source_name, 'N/A') as funds_source_name,
 		COALESCE(CONCAT(member_groups.group_name, ' (', member_groups.group_code, ')'), 'N/A') as customer_group_name,
 		COALESCE(loan.batch, 'N/A') as batch_number,
-		branch_filter.BranchName AS branch_display_name,
+		" . $this->sql_loan_branch_display_name_expr() . ",
+		" . sql_loan_rbm_classification_expr() . " AS rbm_classification,
 		CASE
 			WHEN loan.customer_type = 'group' THEN CONCAT(COALESCE(borrower_grp.group_name, ''), '(', COALESCE(borrower_grp.group_code, ''), ')')
 			WHEN loan.customer_type = 'individual' THEN CONCAT(TRIM(CONCAT(COALESCE(borrower_ic.Firstname, ''), ' ', COALESCE(borrower_ic.Lastname, ''))), IF(COALESCE(borrower_ic.ClientId, '') <> '', CONCAT(' (', borrower_ic.ClientId, ')'), ''))
@@ -8585,11 +8755,10 @@ $this->db->where('payment_number',$i);
 		$this->db->join('groups', 'loan.loan_customer = groups.group_id', 'left');
 		$this->db->join('funds_source', 'funds_source.funds_source = loan.funds_source', 'left');
 		$this->db->join('groups member_groups', 'member_groups.group_id = loan.group_id AND loan.from_group = "Yes"', 'left');
-		$this->db->join('branches branch_filter', 'branch_filter.id = loan.branch', 'left');
 		$this->db->join('groups borrower_grp', "borrower_grp.group_id = loan.loan_customer AND loan.customer_type = 'group'", 'left');
 		$this->db->join('individual_customers borrower_ic', "borrower_ic.id = loan.loan_customer AND loan.customer_type = 'individual'", 'left');
         if (!empty($branch) && $branch != "All") {
-            $this->db->where('loan.branch', $branch);
+            $this->apply_loan_branch_value_filter($branch);
         }
 		if($status !="All"){
 			$this->db->where('loan_status',$status);
@@ -8607,9 +8776,272 @@ $this->db->where('payment_number',$i);
         if($to !=""){
             $this->db->where('loan_added_date <=', date('Y-m-d', strtotime($to)));
         }
+        if ($loan_number !== '') {
+            $this->db->like('loan.loan_number', $loan_number);
+        }
 		$this->db->order_by('loan.loan_id', 'DESC');
 		return $this->db->get()->result();
 	}
+
+	/**
+	 * Branch display name when loan.branch stores branches.id, Code, or BranchCode.
+	 */
+	private function sql_loan_branch_display_name_expr($loan_alias = 'loan')
+	{
+		return "(SELECT b.BranchName FROM branches b
+			WHERE b.id = {$loan_alias}.branch
+			   OR b.Code = {$loan_alias}.branch
+			   OR b.BranchCode = {$loan_alias}.branch
+			LIMIT 1) AS branch_display_name";
+	}
+
+	/**
+	 * Filter loans by branch (dropdown uses Code; loan.branch may store id, Code, or BranchCode).
+	 */
+	private function apply_loan_branch_value_filter($branch_value, $loan_alias = 'loan')
+	{
+		if ($branch_value === '' || $branch_value === null || $branch_value === 'All') {
+			return;
+		}
+		$escaped = $this->db->escape($branch_value);
+		$this->db->where("(
+			{$loan_alias}.branch = {$escaped}
+			OR {$loan_alias}.branch IN (SELECT Code FROM branches WHERE Code = {$escaped} OR BranchCode = {$escaped} OR CAST(id AS CHAR) = {$escaped})
+			OR {$loan_alias}.branch IN (SELECT BranchCode FROM branches WHERE Code = {$escaped} OR BranchCode = {$escaped} OR CAST(id AS CHAR) = {$escaped})
+			OR {$loan_alias}.branch IN (SELECT CAST(id AS CHAR) FROM branches WHERE Code = {$escaped} OR BranchCode = {$escaped} OR CAST(id AS CHAR) = {$escaped})
+		)", null, false);
+	}
+
+	/**
+	 * Shared loan list query (track, recommend, approve, etc.) with filters + pagination.
+	 */
+	private function apply_loan_list_joins($lightweight = false)
+	{
+		$this->db->from($this->table)
+			->join('loan_products', 'loan_products.loan_product_id = loan.loan_product')
+			->join('employees', 'employees.id = loan.loan_added_by', 'left')
+			->join('funds_source', 'funds_source.funds_source = loan.funds_source', 'left')
+			->join('groups linked_member_grp', 'linked_member_grp.group_id = loan.group_id AND loan.from_group = "Yes"', 'left')
+			->join('groups borrower_grp', "borrower_grp.group_id = loan.loan_customer AND LOWER(TRIM(COALESCE(loan.customer_type, ''))) IN ('group', 'groups')", 'left')
+			->join('individual_customers borrower_ic', "borrower_ic.id = loan.loan_customer AND LOWER(TRIM(COALESCE(loan.customer_type, ''))) IN ('individual', 'member')", 'left');
+
+		if (!$lightweight) {
+			$this->db->join('individual_customers', 'loan.loan_customer = individual_customers.id', 'left')
+				->join('groups', 'loan.loan_customer = groups.group_id', 'left');
+		}
+	}
+
+	private function sql_loan_list_customer_display_expr()
+	{
+		return "CASE
+                WHEN LOWER(TRIM(COALESCE(loan.customer_type, ''))) IN ('group', 'groups') THEN COALESCE(
+                    NULLIF(CONCAT(COALESCE(borrower_grp.group_name, ''), '(', COALESCE(borrower_grp.group_code, ''), ')'), '()'),
+                    CONCAT('Group #', loan.loan_customer)
+                )
+                WHEN LOWER(TRIM(COALESCE(loan.customer_type, ''))) IN ('individual', 'member') THEN COALESCE(
+                    NULLIF(
+                        CONCAT(
+                            TRIM(CONCAT(COALESCE(borrower_ic.Firstname, ''), ' ', COALESCE(borrower_ic.Lastname, ''))),
+                            IF(COALESCE(borrower_ic.ClientId, '') <> '', CONCAT(' (', borrower_ic.ClientId, ')'), '')
+                        ),
+                        ''
+                    ),
+                    CONCAT('Member #', loan.loan_customer)
+                )
+                WHEN borrower_grp.group_id IS NOT NULL THEN CONCAT(COALESCE(borrower_grp.group_name, ''), '(', COALESCE(borrower_grp.group_code, ''), ')')
+                WHEN borrower_ic.id IS NOT NULL THEN CONCAT(
+                    TRIM(CONCAT(COALESCE(borrower_ic.Firstname, ''), ' ', COALESCE(borrower_ic.Lastname, ''))),
+                    IF(COALESCE(borrower_ic.ClientId, '') <> '', CONCAT(' (', borrower_ic.ClientId, ')'), '')
+                )
+                ELSE CONCAT('Customer #', COALESCE(NULLIF(loan.loan_customer, ''), 'N/A'))
+            END AS customer_display_name";
+	}
+
+	private function apply_loan_list_select($lightweight = false)
+	{
+		$rbm_sql = $lightweight ? "'Standard' AS rbm_classification" : (sql_loan_rbm_classification_expr() . " AS rbm_classification");
+		$customer_nam_sql = $lightweight ? '' : ",
+            CASE
+                WHEN groups.group_id IS NOT NULL THEN CONCAT(groups.group_name, ' ', groups.group_code)
+                WHEN individual_customers.id IS NOT NULL THEN CONCAT(individual_customers.Firstname, ' ', individual_customers.Lastname, '(', individual_customers.ClientId, ')')
+                ELSE NULL
+            END AS customer_nam";
+
+		$this->db->select("loan.*, loan_products.product_name, loan_products.product_code,
+            employees.Firstname AS efname, employees.Lastname AS elname, loan.branch AS loan_branch,
+            " . $this->sql_loan_branch_display_name_expr() . ",
+            " . $rbm_sql . ",
+            " . $this->sql_loan_list_customer_display_expr() . $customer_nam_sql . ",
+            COALESCE(funds_source.source_name, 'N/A') AS funds_source_name,
+            COALESCE(CONCAT(linked_member_grp.group_name, ' (', linked_member_grp.group_code, ')'), 'N/A') AS customer_group_name,
+            COALESCE(loan.batch, 'N/A') AS batch_number", false);
+	}
+
+	private function apply_loan_list_filters(array $filters)
+	{
+		if (!empty($filters['exclude_deleted'])) {
+			$status_filter = isset($filters['status']) ? $filters['status'] : '';
+			if ($status_filter !== 'DELETED') {
+				$this->db->where('loan.loan_status !=', 'DELETED');
+			}
+		}
+
+		if (!empty($filters['status_in']) && is_array($filters['status_in'])) {
+			$this->db->where_in('loan.loan_status', $filters['status_in']);
+		} elseif (isset($filters['status']) && $filters['status'] !== '' && $filters['status'] !== 'All') {
+			$this->db->where('loan.loan_status', $filters['status']);
+		}
+
+		if (!empty($filters['batch'])) {
+			$this->db->where('loan.batch', $filters['batch']);
+		}
+
+		if (!empty($filters['disbursed'])) {
+			$this->db->where('loan.disbursed', $filters['disbursed']);
+		}
+
+		if (!empty($filters['written_off_pending'])) {
+			$this->db->where('loan.written_off_by IS NOT NULL', null, false);
+		}
+
+		if (!empty($filters['supervisor_officer_ids']) && is_array($filters['supervisor_officer_ids'])) {
+			if (empty($filters['supervisor_officer_ids'])) {
+				$this->db->where('1 = 0', null, false);
+			} else {
+				$this->db->where_in('loan.loan_added_by', $filters['supervisor_officer_ids']);
+			}
+		} elseif (!empty($filters['user']) && $filters['user'] !== 'All') {
+			$this->db->where('loan.loan_added_by', $filters['user']);
+		}
+
+		if (!empty($filters['branch']) && $filters['branch'] !== 'All') {
+			$this->apply_loan_branch_value_filter($filters['branch']);
+		}
+
+		if (!empty($filters['product']) && $filters['product'] !== 'All') {
+			$this->db->where('loan.loan_product', $filters['product']);
+		}
+
+		if (!empty($filters['from'])) {
+			$this->db->where('DATE(loan.loan_added_date) >=', date('Y-m-d', strtotime($filters['from'])));
+		}
+
+		if (!empty($filters['to'])) {
+			$this->db->where('DATE(loan.loan_added_date) <=', date('Y-m-d', strtotime($filters['to'])));
+		}
+
+		if (!empty($filters['loan_number'])) {
+			$this->db->like('loan.loan_number', $filters['loan_number']);
+		}
+
+		if (!empty($filters['customer_name'])) {
+			$this->apply_loan_list_customer_name_filter($filters['customer_name']);
+		}
+	}
+
+	private function apply_loan_list_customer_name_filter($customer_name)
+	{
+		$term = trim((string) $customer_name);
+		if ($term === '') {
+			return;
+		}
+
+		$like = '%' . $this->db->escape_like_str($term) . '%';
+		$esc_like = $this->db->escape($like);
+
+		$this->db->group_start();
+		$this->db->like('borrower_ic.Firstname', $term);
+		$this->db->or_like('borrower_ic.Lastname', $term);
+		$this->db->or_like('borrower_ic.ClientId', $term);
+		$this->db->or_like('borrower_grp.group_name', $term);
+		$this->db->or_like('borrower_grp.group_code', $term);
+		$this->db->or_where(
+			"CONCAT(TRIM(COALESCE(borrower_ic.Firstname,'')), ' ', TRIM(COALESCE(borrower_ic.Lastname,''))) LIKE {$esc_like}",
+			null,
+			false
+		);
+		$this->db->group_end();
+	}
+
+	/**
+	 * Repayment list: all matching loans without per-row RBM subqueries (fast full load).
+	 */
+	public function get_loan_repayment_list(array $filters = array())
+	{
+		$this->db->reset_query();
+		$this->db->order_by('loan.loan_added_date', 'DESC');
+		$this->db->select("loan.*, loan_products.product_name, loan_products.product_code,
+            employees.Firstname AS efname, employees.Lastname AS elname, loan.branch AS loan_branch,
+            " . $this->sql_loan_branch_display_name_expr() . ",
+            " . $this->sql_loan_list_customer_display_expr() . ",
+            COALESCE(funds_source.source_name, 'N/A') AS funds_source_name,
+            COALESCE(CONCAT(linked_member_grp.group_name, ' (', linked_member_grp.group_code, ')'), 'N/A') AS customer_group_name,
+            COALESCE(loan.batch, 'N/A') AS batch_number", false)
+			->from($this->table)
+			->join('loan_products', 'loan_products.loan_product_id = loan.loan_product')
+			->join('employees', 'employees.id = loan.loan_added_by', 'left')
+			->join('funds_source', 'funds_source.funds_source = loan.funds_source', 'left')
+			->join('groups linked_member_grp', 'linked_member_grp.group_id = loan.group_id AND loan.from_group = "Yes"', 'left')
+			->join('groups borrower_grp', "borrower_grp.group_id = loan.loan_customer AND LOWER(TRIM(COALESCE(loan.customer_type, ''))) IN ('group', 'groups')", 'left')
+			->join('individual_customers borrower_ic', "borrower_ic.id = loan.loan_customer AND LOWER(TRIM(COALESCE(loan.customer_type, ''))) IN ('individual', 'member')", 'left');
+		$this->apply_loan_list_filters($filters);
+		return $this->db->get()->result();
+	}
+
+	public function count_loan_list(array $filters = array())
+	{
+		$this->apply_loan_list_joins();
+		$this->apply_loan_list_filters($filters);
+		$this->db->select('COUNT(DISTINCT loan.loan_id) AS cnt', false);
+		$row = $this->db->get()->row();
+		return $row ? (int) $row->cnt : 0;
+	}
+
+	public function get_loan_list_paginated(array $filters = array(), $limit = 10, $offset = 0)
+	{
+		$this->apply_loan_list_select();
+		$this->apply_loan_list_joins();
+		$this->apply_loan_list_filters($filters);
+		$this->db->order_by('loan.loan_added_date', 'DESC');
+		$this->db->limit((int) $limit, (int) $offset);
+		return $this->db->get()->result();
+	}
+
+	public function get_loan_list_all(array $filters = array(), $lightweight = false)
+	{
+		if (!empty($filters['customer_name'])) {
+			$lightweight = true;
+		}
+		$this->db->reset_query();
+		$this->apply_loan_list_select($lightweight);
+		$this->apply_loan_list_joins($lightweight);
+		$this->apply_loan_list_filters($filters);
+		$this->db->order_by('loan.loan_added_date', 'DESC');
+		return $this->db->get()->result();
+	}
+
+	/**
+	 * Full loan list for Excel export (filters applied; includes approver/disburser names).
+	 */
+	public function get_loan_list_for_export(array $filters = array())
+	{
+		$this->db->reset_query();
+		$this->apply_loan_list_select(true);
+		$this->db->select(
+			'approver.Firstname AS approverfname, approver.Lastname AS approverlname,
+			rejecter.Firstname AS rejecterfname, rejecter.Lastname AS rejecterlname,
+			disburser.Firstname AS disburserfname, disburser.Lastname AS disburserlname',
+			false
+		);
+		$this->apply_loan_list_joins(true);
+		$this->db->join('employees approver', 'approver.id = loan.loan_approved_by', 'left')
+			->join('employees disburser', 'disburser.id = loan.disbursed_by', 'left')
+			->join('employees rejecter', 'rejecter.id = loan.rejected_by', 'left');
+		$this->apply_loan_list_filters($filters);
+		$this->db->order_by('loan.loan_added_date', 'DESC');
+		return $this->db->get()->result();
+	}
+
 	function get_user_loan($id)
 	{
 		$this->db->order_by($this->id, $this->order);
@@ -8910,7 +9342,8 @@ $this->db->where('payment_number',$i);
                     lp.product_name,
                     e.Firstname as officer_firstname, e.Lastname as officer_lastname,
                     re.Firstname as risk_officer_firstname, re.Lastname as risk_officer_lastname,
-                    b.BranchName,
+                    ' . $this->sql_loan_branch_display_name_expr() . ',
+                    ' . sql_loan_rbm_classification_expr() . ' AS rbm_classification,
                     IFNULL((SELECT MAX(DATEDIFF(CURRENT_DATE(), payment_schedule)) 
                      FROM payement_schedules 
                      WHERE loan_id = loan.loan_id 
@@ -8944,7 +9377,6 @@ $this->db->where('payment_number',$i);
         $this->db->join('loan_products lp', 'lp.loan_product_id = loan.loan_product', 'left');
         $this->db->join('employees e', 'e.id = loan.loan_added_by', 'left');
         $this->db->join('employees re', 're.id = loan.risk_officer_id', 'left');
-        $this->db->join('branches b', 'b.id = loan.branch', 'left');
 
         // Base condition - only active loans
         $this->db->where('loan.loan_status', 'ACTIVE');
@@ -8978,7 +9410,7 @@ $this->db->where('payment_number',$i);
         }
 
         if ($branch) {
-            $this->db->where('loan.branch', $branch);
+            $this->apply_loan_branch_value_filter($branch);
         }
 
         if ($writeoff !== null) {
@@ -9006,18 +9438,7 @@ $this->db->where('payment_number',$i);
             // Calculate collateral total value
             $loans[$key]->collateral_total_value = array_sum(array_column($collaterals, 'value'));
 
-            // Determine RBM classification
-            if ($loan->days_in_arrears < 30) {
-                $loans[$key]->rbm_classification = 'Standard';
-            } else if ($loan->days_in_arrears >= 30 && $loan->days_in_arrears < 60) {
-                $loans[$key]->rbm_classification = 'Special Mention';
-            } else if ($loan->days_in_arrears >= 60 && $loan->days_in_arrears < 90) {
-                $loans[$key]->rbm_classification = 'Substandard';
-            } else if ($loan->days_in_arrears >= 90 && $loan->days_in_arrears < 180) {
-                $loans[$key]->rbm_classification = 'Doubtful';
-            } else {
-                $loans[$key]->rbm_classification = 'Loss';
-            }
+            $loans[$key]->rbm_classification = determine_rbm_classification($loan->days_in_arrears);
         }
 
         return $loans;

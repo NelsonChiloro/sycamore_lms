@@ -74,7 +74,7 @@ class Collections_report extends CI_Controller {
         $url = report_service_url('generate-report-collections');
 
         // Prepare the data to be sent
-        $data = [
+        $data = array_merge([
             "report_type" => "LOAN_COLLECTIONS",
             "user" => $this->session->userdata('Firstname')." ".$this->session->userdata('Lastname'),
             "user_id" => $this->session->userdata('user_id'),
@@ -85,7 +85,7 @@ class Collections_report extends CI_Controller {
             "period" => $period,
             "date_from" => $date_from,
             "date_to" => $date_to
-        ];
+        ], report_supervisor_curl_payload());
 
         // Convert the data array to JSON
         $jsonData = json_encode($data);

@@ -43,12 +43,17 @@
                     <div class="col-md-6">
                         <div class="form-group">
                             <label for="officer_id">Loan Officer:</label>
-                            <select class="form-control" id="officer_id" name="officer_id">
+                            <select class="form-control" id="report-filter-officer" name="officer_id">
                                 <option value="">All Officers</option>
                                 <?php foreach ($officers as $officer): ?>
                                     <option value="<?php echo $officer->id; ?>"><?php echo $officer->Firstname . ' ' . $officer->Lastname; ?></option>
                                 <?php endforeach; ?>
                             </select>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <?php $this->load->view('reports/_relationship_supervisor_filter'); ?>
                         </div>
                     </div>
                     <div class="col-md-6">

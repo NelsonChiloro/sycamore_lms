@@ -126,8 +126,8 @@ $next_payment_details = $this->Payement_schedules_model->get_next($next_payment_
                         <tr>
                             <td style="text-align: right;padding-right: 10px;">Branch</td>
                             <td><?php
-                                 $branch = get_by_id('branches','id',$branch);
-                                echo $branch ? $branch->BranchName : 'N/A';
+                                 $branchRow = get_branch_for_loan_value($branch);
+                                echo $branchRow ? $branchRow->BranchName : 'N/A';
 
                                 ?></td>
                         </tr>
@@ -146,42 +146,33 @@ $next_payment_details = $this->Payement_schedules_model->get_next($next_payment_
                             <td style="text-align: right;padding-right: 10px;">Total Loan cover</td>
                             <td>MWK<?php echo number_format($loan_cover_amount,2)?></td>
                         </tr>
+                        <?php
+                        if (!isset($payment_balance)) {
+                            $payment_balance = $this->Payement_schedules_model->summarize_loan_balances($payments, $loan_amount_total);
+                        }
+                        ?>
                         <tr>
                             <td style="text-align: right;padding-right: 10px;">Total loan amount</td>
-                            <td>MWK <?php echo number_format($loan_amount_total,2)?></td>
+                            <td>MWK <?php echo number_format($payment_balance->total_loan_amount, 2); ?></td>
                         </tr>
                         <tr>
                             <td style="text-align: right;padding-right: 10px;">Payments Made</td>
-                            <td>MWK
-                                <?php
-                                $total_p = 0;
-                                foreach ($payments as $pp){
-
-                                    $total_p +=$pp->paid_amount;
-
-
-                                }
-                                echo number_format($total_p,2);
-                                ?>
-
-                            </td>
+                            <td>MWK <?php echo number_format($payment_balance->total_paid, 2); ?></td>
                         </tr>
                         <tr>
-                            <td style="text-align: right;padding-right: 10px;">Remaining Balance
-                            </td>
-                            <td>MWK
-
-                                <?php
-                                $total_b = 0;
-                                foreach ($payments as $ppp){
-
-                                    $total_b +=$ppp->amount;
-
-                                }
-                                echo number_format(max(0, $total_b-$total_p),2);
-                                ?>
-                            </td>
+                            <td style="text-align: right;padding-right: 10px;">Remaining Balance</td>
+                            <td>MWK <?php echo number_format($payment_balance->remaining_balance, 2); ?></td>
                         </tr>
+                        <?php if (!empty($payment_balance->total_late_charges)): ?>
+                        <tr>
+                            <td style="text-align: right;padding-right: 10px;">Late charges</td>
+                            <td>MWK <?php echo number_format($payment_balance->total_late_charges, 2); ?></td>
+                        </tr>
+                        <tr>
+                            <td style="text-align: right;padding-right: 10px;">Total amount due now</td>
+                            <td>MWK <?php echo number_format($payment_balance->total_due_now, 2); ?></td>
+                        </tr>
+                        <?php endif; ?>
                     </table>
                     <br>
                     <h2>Schedule Payment</h2>

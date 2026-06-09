@@ -39,6 +39,10 @@ class Revenue_report extends CI_Controller {
         $start_date = $this->input->post('start_date');
         $end_date = $this->input->post('end_date');
         $officer_id = $this->input->post('officer_id');
+        $supervisor_id = report_supervisor_input_value('post');
+        if ($supervisor_id) {
+            $officer_id = null;
+        }
         $branch_id = $this->input->post('branch_id');
 
         // Prepare data for the view
@@ -52,8 +56,11 @@ class Revenue_report extends CI_Controller {
         $display_end_date = !empty($end_date) ? date('d M Y', strtotime($end_date)) : 'Present';
         $data['date_range_display'] = "$display_start_date to $display_end_date";
 
-        // Get officer name if an officer is selected
-        if (!empty($officer_id)) {
+        // Get officer / supervisor label for report header
+        if ($supervisor_id) {
+            $name = report_supervisor_display_name($supervisor_id);
+            $data['officer_name'] = $name !== '' ? ('Supervisor: ' . $name) : 'Supervisor filter';
+        } elseif (!empty($officer_id)) {
             $officer = $this->Employees_model->get_by_id($officer_id);
             $data['officer_name'] = $officer ? $officer->Firstname . ' ' . $officer->Lastname : 'Unknown';
         } else {
@@ -69,7 +76,7 @@ class Revenue_report extends CI_Controller {
         }
 
         // Get revenue data based on filters
-        $data['revenue_data'] = $this->get_revenue_data($start_date, $end_date, $officer_id, $branch_id);
+        $data['revenue_data'] = $this->get_revenue_data($start_date, $end_date, $officer_id, $branch_id, $supervisor_id);
 
         // Calculate totals
         $totals = array(
@@ -110,7 +117,7 @@ class Revenue_report extends CI_Controller {
     /**
      * Get revenue data based on filter criteria
      */
-    private function get_revenue_data($start_date = null, $end_date = null, $officer_id = null, $branch_id = null) {
+    private function get_revenue_data($start_date = null, $end_date = null, $officer_id = null, $branch_id = null, $supervisor_id = null) {
         // First, get products for grouping
 
 
@@ -161,8 +168,9 @@ class Revenue_report extends CI_Controller {
                     $this->db->where('l.loan_date <=', $end_date);
                 }
 
-                // Apply officer filter if provided
-                if (!empty($officer_id)) {
+                if ($supervisor_id) {
+                    report_apply_supervisor_loan_filter($supervisor_id, 'l');
+                } elseif (!empty($officer_id)) {
                     $this->db->where('l.loan_added_by', $officer_id);
                 }
 

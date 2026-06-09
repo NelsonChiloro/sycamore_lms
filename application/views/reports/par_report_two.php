@@ -28,12 +28,15 @@
                             </div>
                             <div class="col-md-3">
                                 <label for="officer">Officer:</label>
-                                <select name="officer" id="officer" class="select2 form-control">
+                                <select name="officer" id="report-filter-officer" class="select2 form-control">
                                     <option value="All">All Officers</option>
                                     <?php foreach ($users as $user){ ?>
                                         <option value="<?php echo $user->id; ?>" <?php if(isset($_GET['id']) && $user->id == $_GET['id']){echo 'selected';} ?>><?php echo $user->Firstname." ".$user->Lastname; ?></option>
                                     <?php } ?>
                                 </select>
+                            </div>
+                            <div class="col-md-3">
+                                <?php $this->load->view('reports/_relationship_supervisor_filter'); ?>
                             </div>
                             <div class="col-md-3">
                                 <label for="branch">Branch:</label>

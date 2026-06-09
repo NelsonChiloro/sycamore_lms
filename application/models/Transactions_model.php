@@ -44,9 +44,30 @@ class Transactions_model extends CI_Model
     }
     function search2($id)
     {
-        $r = get_by_id('loan','loan_id', $id);
-        $this->db->order_by('system_time', $this->order);
+        return $this->search2_filtered($id);
+    }
+
+    /**
+     * Account statement rows (transaction ledger) for a loan account.
+     */
+    function search2_filtered($loan_id, $from = null, $to = null)
+    {
+        $r = get_by_id('loan', 'loan_id', $loan_id);
+        if (!$r || empty($r->loan_number)) {
+            return array();
+        }
+
+        $this->db->order_by('transaction.system_time', $this->order);
         $this->db->where('transaction.account_number', $r->loan_number);
+
+        $from = trim((string) $from);
+        $to = trim((string) $to);
+        if ($from !== '') {
+            $this->db->where('DATE(transaction.system_time) >=', date('Y-m-d', strtotime($from)));
+        }
+        if ($to !== '') {
+            $this->db->where('DATE(transaction.system_time) <=', date('Y-m-d', strtotime($to)));
+        }
 
         return $this->db->get('transaction')->result();
     }
