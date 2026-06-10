@@ -42,6 +42,38 @@ class Employees_model extends CI_Model
         return strpos($name, 'RELATIONSHIP') !== false && strpos($name, 'SUPERVISOR') !== false;
     }
 
+    public static function role_is_branch_manager($role_name)
+    {
+        $name = self::normalize_role_name($role_name);
+        return strpos($name, 'BRANCH') !== false && strpos($name, 'MANAGER') !== false;
+    }
+
+    public static function role_is_risk_officer($role_name)
+    {
+        $name = self::normalize_role_name($role_name);
+        if ($name === '') {
+            return false;
+        }
+        if (strpos($name, 'RISK') === false || strpos($name, 'OFFICER') === false) {
+            return false;
+        }
+        return strpos($name, 'SUPERVISOR') === false && strpos($name, 'REHABILITATION') === false;
+    }
+
+    public static function role_is_risk_rehab_supervisor($role_name)
+    {
+        $name = self::normalize_role_name($role_name);
+        return strpos($name, 'RISK') !== false && strpos($name, 'REHABILITATION') !== false;
+    }
+
+    /**
+     * Valid supervisor for a Relationship officer: Relationship supervisor or Branch manager.
+     */
+    public static function role_can_supervise_relationship_officer($role_name)
+    {
+        return self::role_is_relationship_supervisor($role_name) || self::role_is_branch_manager($role_name);
+    }
+
     public function get_role_by_id($role_id)
     {
         return $this->db->where('id', (int) $role_id)->get('roles')->row();
@@ -67,9 +99,9 @@ class Employees_model extends CI_Model
     }
 
     /**
-     * Active relationship supervisors for dropdowns.
+     * Employees whose role name matches the given predicate (for dropdowns).
      */
-    public function get_relationship_supervisors()
+    private function get_employees_by_role_predicate($predicate)
     {
         $rows = array();
         $this->db->reset_query();
@@ -79,7 +111,7 @@ class Employees_model extends CI_Model
         $this->db->order_by('employees.Firstname', 'ASC');
         $this->db->order_by('employees.Lastname', 'ASC');
         foreach ($this->db->get()->result() as $row) {
-            if (self::role_is_relationship_supervisor($row->RoleName)) {
+            if (call_user_func($predicate, $row->RoleName)) {
                 $rows[] = $row;
             }
         }
@@ -88,9 +120,33 @@ class Employees_model extends CI_Model
     }
 
     /**
-     * Active relationship officers for dropdowns and mapping.
+     * Active relationship supervisors for dropdowns.
      */
-    public function get_relationship_officers($include_supervisor_join = false)
+    public function get_relationship_supervisors()
+    {
+        return $this->get_employees_by_role_predicate(array(__CLASS__, 'role_is_relationship_supervisor'));
+    }
+
+    /**
+     * Active branch managers for dropdowns.
+     */
+    public function get_branch_managers()
+    {
+        return $this->get_employees_by_role_predicate(array(__CLASS__, 'role_is_branch_manager'));
+    }
+
+    /**
+     * Active risk and rehabilitation supervisors for dropdowns.
+     */
+    public function get_risk_rehab_supervisors()
+    {
+        return $this->get_employees_by_role_predicate(array(__CLASS__, 'role_is_risk_rehab_supervisor'));
+    }
+
+    /**
+     * Officers whose role matches the predicate, optionally with supervisor names joined.
+     */
+    private function get_officers_by_role_predicate($predicate, $include_supervisor_join = false)
     {
         $this->db->reset_query();
         if ($include_supervisor_join) {
@@ -109,12 +165,28 @@ class Employees_model extends CI_Model
         $this->db->order_by('employees.Lastname', 'ASC');
         $rows = array();
         foreach ($this->db->get()->result() as $row) {
-            if (self::role_is_relationship_officer($row->RoleName)) {
+            if (call_user_func($predicate, $row->RoleName)) {
                 $rows[] = $row;
             }
         }
         $this->db->reset_query();
         return $rows;
+    }
+
+    /**
+     * Active relationship officers for dropdowns and mapping.
+     */
+    public function get_relationship_officers($include_supervisor_join = false)
+    {
+        return $this->get_officers_by_role_predicate(array(__CLASS__, 'role_is_relationship_officer'), $include_supervisor_join);
+    }
+
+    /**
+     * Active risk officers for dropdowns and mapping.
+     */
+    public function get_risk_officers($include_supervisor_join = false)
+    {
+        return $this->get_officers_by_role_predicate(array(__CLASS__, 'role_is_risk_officer'), $include_supervisor_join);
     }
 
     /**

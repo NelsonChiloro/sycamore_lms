@@ -97,8 +97,9 @@ $countryd = $this->Geo_countries_model->get_all();
                                     $ci->load->model('Employees_model');
 									foreach ($r as $item){
                                         $is_ro = $ci->Employees_model->role_is_relationship_officer($item->RoleName);
+                                        $is_risk = $ci->Employees_model->role_is_risk_officer($item->RoleName);
 										?>
-										<option value="<?php echo (int) $item->id?>" data-is-relationship-officer="<?php echo $is_ro ? '1' : '0'; ?>" <?php if($Role==$item->id){echo "selected";} ?>><?php echo htmlspecialchars($item->RoleName); ?></option>
+										<option value="<?php echo (int) $item->id?>" data-is-relationship-officer="<?php echo $is_ro ? '1' : '0'; ?>" data-is-risk-officer="<?php echo $is_risk ? '1' : '0'; ?>" <?php if($Role==$item->id){echo "selected";} ?>><?php echo htmlspecialchars($item->RoleName); ?></option>
 
 										<?php
 									}
@@ -121,15 +122,43 @@ $countryd = $this->Geo_countries_model->get_all();
 								</select>
 							</div>
                             <div class="form-group col-6" id="supervisor-field-wrap" style="display: none;">
-                                <label for="Supervisor">Relationship supervisor * <?php echo form_error('Supervisor') ?></label>
+                                <label for="Supervisor">Supervisor (Relationship supervisor or Branch manager) * <?php echo form_error('Supervisor') ?></label>
                                 <select class="form-control" name="Supervisor" id="Supervisor">
                                     <option value="">-- Select supervisor --</option>
                                     <?php
                                     $supervisors = isset($relationship_supervisors) ? $relationship_supervisors : array();
+                                    $managers = isset($branch_managers) ? $branch_managers : array();
+                                    ?>
+                                    <optgroup label="Relationship supervisors">
+                                    <?php
                                     foreach ($supervisors as $sup) {
                                         $sel = (isset($Supervisor) && (int) $Supervisor === (int) $sup->id) ? ' selected' : '';
                                         echo '<option value="' . (int) $sup->id . '"' . $sel . '>' .
                                             htmlspecialchars(trim($sup->Firstname . ' ' . $sup->Lastname)) . '</option>';
+                                    }
+                                    ?>
+                                    </optgroup>
+                                    <optgroup label="Branch managers">
+                                    <?php
+                                    foreach ($managers as $bm) {
+                                        $sel = (isset($Supervisor) && (int) $Supervisor === (int) $bm->id) ? ' selected' : '';
+                                        echo '<option value="' . (int) $bm->id . '"' . $sel . '>' .
+                                            htmlspecialchars(trim($bm->Firstname . ' ' . $bm->Lastname)) . '</option>';
+                                    }
+                                    ?>
+                                    </optgroup>
+                                </select>
+                            </div>
+                            <div class="form-group col-6" id="risk-supervisor-field-wrap" style="display: none;">
+                                <label for="RiskSupervisor">Risk and Rehabilitation supervisor * <?php echo form_error('Supervisor') ?></label>
+                                <select class="form-control" name="Supervisor" id="RiskSupervisor" disabled>
+                                    <option value="">-- Select supervisor --</option>
+                                    <?php
+                                    $risk_sups = isset($risk_rehab_supervisors) ? $risk_rehab_supervisors : array();
+                                    foreach ($risk_sups as $rs) {
+                                        $sel = (isset($Supervisor) && (int) $Supervisor === (int) $rs->id) ? ' selected' : '';
+                                        echo '<option value="' . (int) $rs->id . '"' . $sel . '>' .
+                                            htmlspecialchars(trim($rs->Firstname . ' ' . $rs->Lastname)) . '</option>';
                                     }
                                     ?>
                                 </select>
@@ -144,11 +173,13 @@ $countryd = $this->Geo_countries_model->get_all();
 </div>
 <script>
 (function () {
-    var roleMap = <?php echo isset($roles_json) ? $roles_json : '{"officer":[],"supervisor":[]}'; ?>;
+    var roleMap = <?php echo isset($roles_json) ? $roles_json : '{"officer":[],"supervisor":[],"risk_officer":[]}'; ?>;
     function initSupervisorFieldToggle() {
         var roleSelect = document.getElementById('Role');
         var supervisorWrap = document.getElementById('supervisor-field-wrap');
         var supervisorSelect = document.getElementById('Supervisor');
+        var riskWrap = document.getElementById('risk-supervisor-field-wrap');
+        var riskSelect = document.getElementById('RiskSupervisor');
         if (!roleSelect || !supervisorWrap) {
             return;
         }
@@ -169,13 +200,43 @@ $countryd = $this->Geo_countries_model->get_all();
                 && text.indexOf('OFFICER') !== -1
                 && text.indexOf('SUPERVISOR') === -1;
         }
+        function isRiskOfficerRole() {
+            var opt = roleSelect.options[roleSelect.selectedIndex];
+            if (opt && opt.getAttribute('data-is-risk-officer') === '1') {
+                return true;
+            }
+            var roleId = parseInt(roleSelect.value, 10);
+            if (roleMap.risk_officer && roleMap.risk_officer.indexOf(roleId) !== -1) {
+                return true;
+            }
+            if (!opt || !opt.text) {
+                return false;
+            }
+            var text = opt.text.toUpperCase();
+            return text.indexOf('RISK') !== -1
+                && text.indexOf('OFFICER') !== -1
+                && text.indexOf('SUPERVISOR') === -1
+                && text.indexOf('REHABILITATION') === -1;
+        }
         function syncSupervisorField() {
-            var show = isOfficerRole();
-            supervisorWrap.style.display = show ? 'block' : 'none';
+            var showRo = isOfficerRole();
+            var showRisk = !showRo && isRiskOfficerRole();
+            supervisorWrap.style.display = showRo ? 'block' : 'none';
             if (supervisorSelect) {
-                supervisorSelect.required = show;
-                if (!show) {
+                supervisorSelect.required = showRo;
+                supervisorSelect.disabled = !showRo;
+                if (!showRo) {
                     supervisorSelect.value = '';
+                }
+            }
+            if (riskWrap) {
+                riskWrap.style.display = showRisk ? 'block' : 'none';
+            }
+            if (riskSelect) {
+                riskSelect.required = showRisk;
+                riskSelect.disabled = !showRisk;
+                if (!showRisk) {
+                    riskSelect.value = '';
                 }
             }
         }
