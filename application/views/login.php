@@ -33,7 +33,9 @@ $settings = get_by_id('settings','settings_id','1');
 									<h2 class="m-b-0">Login</h2>
 								</div>
 							<?php
-								if($this->session->flashdata('active')){
+								$error = isset($error) ? $error : null;
+								$active = isset($active) ? $active : null;
+								if (!empty($active)) {
 									?>
 									<div class="alert-danger" style="padding: 2em;">
 										Sorry another session with your credentials is on,Please log out or ask admin to clear you
@@ -42,7 +44,7 @@ $settings = get_by_id('settings','settings_id','1');
 								}
 								?>
 								<?php
-								if($this->session->flashdata('error')){
+								if (!empty($error)) {
 									?>
 									<div class="alert alert-danger text-black-50" role="alert">
 										Sorry !, Either email or password is not correct;
@@ -50,16 +52,20 @@ $settings = get_by_id('settings','settings_id','1');
 									<?php
 								}
 								?>
+								<p class="text-muted" style="font-size:12px;">
+									Page stuck loading?
+									<a href="<?php echo base_url('clear_session.php'); ?>">Reset session</a>
+								</p>
 								<form method="post" action="<?php echo base_url('Auth/authenticate')?>">
 									<div class="form-group">
-										<label class="font-weight-semibold" for="userName">Username:<?php echo form_error('username') ?></label>
+										<label class="font-weight-semibold" for="userName">Username:</label>
 										<div class="input-affix">
 											<i class="prefix-icon anticon anticon-user"></i>
 											<input required type="text" name="username" class="form-control" id="userName" placeholder="Enter username">
 										</div>
 									</div>
 									<div class="form-group">
-										<label class="font-weight-semibold" for="password">Password:<?php echo form_error('username') ?></label>
+										<label class="font-weight-semibold" for="password">Password:</label>
 										<a class="float-right font-size-13 text-muted" href="#">Forget Password?</a>
 										<div class="input-affix m-b-10">
 											<i class="prefix-icon anticon anticon-lock"></i>

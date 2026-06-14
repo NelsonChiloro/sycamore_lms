@@ -13,7 +13,9 @@ $paid_af = isset($summary_stats['paid_af']) ? (float) $summary_stats['paid_af'] 
 $outstanding_interest = isset($summary_stats['outstanding_interest']) ? (float) $summary_stats['outstanding_interest'] : 0;
 $outstanding_lc = isset($summary_stats['outstanding_lc']) ? (float) $summary_stats['outstanding_lc'] : 0;
 $outstanding_af = isset($summary_stats['outstanding_af']) ? (float) $summary_stats['outstanding_af'] : 0;
-$total_unpaid = isset($summary_stats['total_unpaid']) ? (float) $summary_stats['total_unpaid'] : 0;
+$total_unpaid = isset($summary_stats['gross_loan_portfolio']) ? (float) $summary_stats['gross_loan_portfolio'] : (isset($summary_stats['total_unpaid']) ? (float) $summary_stats['total_unpaid'] : 0);
+$total_outstanding_balance = isset($summary_stats['total_outstanding_balance']) ? (float) $summary_stats['total_outstanding_balance'] : $total_unpaid;
+$accrued_charges = isset($summary_stats['accrued_charges']) ? (float) $summary_stats['accrued_charges'] : 0;
 $total_arrears = isset($summary_stats['total_arrears']) ? (float) $summary_stats['total_arrears'] : 0;
 $one_day_arrears = isset($summary_stats['one_day_arrears']) ? (float) $summary_stats['one_day_arrears'] : 0;
 $three_day_arrears = isset($summary_stats['three_day_arrears']) ? (float) $summary_stats['three_day_arrears'] : 0;
@@ -46,10 +48,18 @@ $overview_cards = array(
     ),
     array(
         'eyebrow' => 'Open portfolio',
-        'title' => 'Outstanding principal',
+        'title' => 'Gross loan portfolio',
         'value' => $total_unpaid,
-        'note' => 'Institution-wide balance still active on the books.',
+        'note' => 'Unpaid principal (charge-first allocation), aligned with portfolio analysis.',
         'link' => base_url('Loan/balances'),
+        'tone' => 'navy',
+    ),
+    array(
+        'eyebrow' => 'Open portfolio',
+        'title' => 'Outstanding balance',
+        'value' => $total_outstanding_balance,
+        'note' => 'Unpaid principal plus accrued charges to month end.',
+        'link' => base_url('reports/portfolio_analysis'),
         'tone' => 'navy',
     ),
     array(
@@ -65,7 +75,7 @@ $overview_cards = array(
         'title' => 'PAR',
         'value' => $par_percentage,
         'value_type' => 'percent',
-        'note' => 'Portfolio at risk based on overdue exposure versus active unpaid portfolio.',
+        'note' => 'Portfolio at risk: overdue balance vs gross loan portfolio (portfolio analysis formula).',
         'link' => base_url('Reports/par_reports'),
         'tone' => 'amber',
     ),
@@ -97,24 +107,24 @@ $revenue_cards = array(
 
 $balance_cards = array(
     array(
-        'title' => 'Interest balance',
-        'value' => $outstanding_interest,
-        'note' => 'Interest still outstanding on active loans.',
+        'title' => 'Accrued charges',
+        'value' => $accrued_charges > 0 ? $accrued_charges : ($outstanding_interest + $outstanding_lc + $outstanding_af),
+        'note' => 'Unpaid interest, cover and admin fees earned to month end.',
         'link' => base_url('Loan/balances'),
         'tone' => 'navy',
     ),
     array(
-        'title' => 'Loan cover balance',
-        'value' => $outstanding_lc,
-        'note' => 'Unpaid loan cover across the portfolio.',
+        'title' => 'Gross loan portfolio',
+        'value' => $total_unpaid,
+        'note' => 'Unpaid principal across active loans.',
         'link' => base_url('Loan/balances'),
         'tone' => 'violet',
     ),
     array(
-        'title' => 'Admin fee balance',
-        'value' => $outstanding_af,
-        'note' => 'Administration charges still pending.',
-        'link' => base_url('Loan/balances'),
+        'title' => 'Total outstanding',
+        'value' => $total_outstanding_balance,
+        'note' => 'Principal plus accrued charges (portfolio analysis).',
+        'link' => base_url('reports/portfolio_analysis'),
         'tone' => 'stone',
     ),
 );

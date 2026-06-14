@@ -6,7 +6,6 @@ const moment = require('moment');
 const fs = require('fs');
 const path= require('path');
 const { processBatchLoanDateUpdate } = require('./loanDateBatchEditor');
-const { computeAndStorePortfolioDashboard, getLatestPortfolioDashboard } = require('./portfolioDashboard');
 const { generateLoanPortfolioReport } = require('./loanPortfolioReport');
 const { generateLoanPortfolioWriteOffReport } = require('./loanPortfolioWriteOffReport');
 const { generateLoanCollectionsReport } = require('./loanCollectionReport');
@@ -16,6 +15,7 @@ const { generateTrackTransactionsReport } = require('./trackTransactionsReport')
 const { generateRBMClassificationReport } = require('./rbmClassificationReport');
 const { generateArrearsReport } = require('./arrearsReport');
 const { generateLoanDepositsReport } = require('./loanDepositsReport');
+const { generateOutstandingBalancesReport, queryOutstandingBalancesData } = require('./outstandingBalancesReport');
 const {
     generatePARReportV2,
     generatePARReportV2Enhanced,
@@ -2917,6 +2917,106 @@ app.post('/generate-report-arrears', async (req, res) => {
                 if (reportTrackers[result.insertId] && reportTrackers[result.insertId].intervalId) {
                     clearInterval(reportTrackers[result.insertId].intervalId);
                     delete reportTrackers[result.insertId]; // Remove the tracker
+                }
+            });
+        }
+    });
+});
+
+app.get('/outstanding-balances/data', async (req, res) => {
+    try {
+        const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+        const limit = Math.min(2000, Math.max(1, parseInt(req.query.limit, 10) || 500));
+        const filterOptions = {
+            product_id: firstNonEmpty(req.query.product_id, req.query.product) ?? null,
+            officer_id: firstNonEmpty(req.query.officer_id, req.query.officer) ?? null,
+            loan_id: firstNonEmpty(req.query.loan_id, req.query.loan) ?? null,
+            from: normalizeDateInput(firstNonEmpty(req.query.from, req.query.date_from, req.query.start_date)) || null,
+            to: normalizeDateInput(firstNonEmpty(req.query.to, req.query.date_to, req.query.end_date)) || null,
+            supervisor: firstNonEmpty(req.query.supervisor) ?? 'All',
+        };
+
+        const data = await queryOutstandingBalancesData(filterOptions, page, limit);
+        res.json(data);
+    } catch (err) {
+        console.error('[Outstanding Balances] GET /data error:', err.message);
+        res.status(500).json({ error: 'Failed to load outstanding balances data.' });
+    }
+});
+
+app.post('/generate-report-outstanding-balances', async (req, res) => {
+    res.status(202).json({ message: 'Outstanding Balances Report generation is processing...' });
+
+    const report = {
+        report_type: 'OUTSTANDING_BALANCES',
+        user: req.body.user || 'System',
+        user_id: req.body.user_id || 0,
+        status: 'in progress',
+    };
+
+    db.query('INSERT INTO reports SET ?', report, async (err, result) => {
+        if (err) {
+            console.error('Failed to insert outstanding balances report: ', err);
+            return;
+        }
+
+        try {
+            const currentDate = moment().format('YYYYMMDD_HHmmss');
+            const paths = getReportPaths('report_outstanding_balances', currentDate);
+
+            reportTrackers[result.insertId] = {
+                percentage: 0,
+                intervalId: setInterval(() => updatePercentageToDB(result.insertId), 15000),
+            };
+
+            const filterOptions = {
+                product_id: firstNonEmpty(req.body.product_id, req.body.product, req.body.productid) ?? null,
+                product_name: req.body.product_name || 'All Products',
+                officer_id: firstNonEmpty(req.body.officer_id, req.body.officer) ?? null,
+                officer_name: req.body.officer_name || 'All Officers',
+                loan_id: firstNonEmpty(req.body.loan_id, req.body.loan) ?? null,
+                loan_label: req.body.loan_label || 'All Loans',
+                from: normalizeDateInput(firstNonEmpty(req.body.from, req.body.date_from, req.body.start_date)) || null,
+                to: normalizeDateInput(firstNonEmpty(req.body.to, req.body.date_to, req.body.end_date)) || null,
+                supervisor: firstNonEmpty(req.body.supervisor) ?? 'All',
+                supervisor_name: req.body.supervisor_name || '',
+            };
+
+            await generateOutstandingBalancesReport(
+                filterOptions,
+                result.insertId,
+                reportTrackers,
+                paths.filePath
+            );
+
+            const updateReport = {
+                status: 'completed',
+                percentage: 100,
+                download_link: paths.dbPath,
+                completed_time: new Date(),
+            };
+
+            db.query('UPDATE reports SET ? WHERE id = ?', [updateReport, result.insertId], (updateErr) => {
+                if (updateErr) {
+                    console.error('Failed to update outstanding balances report status: ', updateErr);
+                    return;
+                }
+                clearInterval(reportTrackers[result.insertId].intervalId);
+                delete reportTrackers[result.insertId];
+            });
+        } catch (genErr) {
+            console.error('Error during outstanding balances report generation: ', genErr);
+
+            const updateReport = {
+                status: 'failed',
+                error_message: genErr.message,
+                completed_time: new Date(),
+            };
+
+            db.query('UPDATE reports SET ? WHERE id = ?', [updateReport, result.insertId], () => {
+                if (reportTrackers[result.insertId] && reportTrackers[result.insertId].intervalId) {
+                    clearInterval(reportTrackers[result.insertId].intervalId);
+                    delete reportTrackers[result.insertId];
                 }
             });
         }

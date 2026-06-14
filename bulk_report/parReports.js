@@ -603,7 +603,7 @@ function generateExcelStylePARReport(currentDate, loans, totalPortfolio, branchN
  * @param {Object} reportTrackers - Report trackers object
  * @returns {Promise<boolean>} Success status
  */
-async function generatePARReportV2Enhanced(reportId, officer, product, branch, dateFrom, dateTo, supervisor, db, reportTrackers) {
+async function generatePARReportV2Enhanced(reportId, officer, product, branch, dateFrom, dateTo, supervisor, db, reportTrackers, reportOptions = {}) {
     console.log('====== ENHANCED DETAILED PORTFOLIO REPORT GENERATION STARTED ======');
     console.log('[1/6] Establishing database connection...');
     console.log(`Report will be saved to: ${reportTrackers[reportId].filePath}`);
@@ -916,7 +916,8 @@ async function generatePARReportV2Enhanced(reportId, officer, product, branch, d
                             totalOutstandingBalanceSummary,
                             totalAccruedChargesSummary,
                             customerCount,
-                            parSummary
+                            parSummary,
+                            reportOptions
                         );
 
                         // Write to file
@@ -1218,7 +1219,9 @@ async function getFilterDisplayNames(branch, officer, product, db) {
  * @param {string} dateTo - End date
  * @returns {string} HTML report content
  */
-function generateEnhancedPortfolioReport(currentDate, loans, totalPortfolio, filterDisplayNames, dateFrom, dateTo, reportAsOfDate = null, totalOutstandingBalanceSummary = null, totalAccruedChargesSummary = null, customerCount = null, parSummary = []) {
+function generateEnhancedPortfolioReport(currentDate, loans, totalPortfolio, filterDisplayNames, dateFrom, dateTo, reportAsOfDate = null, totalOutstandingBalanceSummary = null, totalAccruedChargesSummary = null, customerCount = null, parSummary = [], reportOptions = {}) {
+    const reportTitle = reportOptions.title || 'Detailed Portfolio Report';
+    const exportBaseName = reportOptions.exportBaseName || 'Detailed_Portfolio_Report';
     const formatCurrency = (amount) => {
         if (isNaN(amount) || amount === null || amount === undefined) {
             return '0.00';
@@ -1301,7 +1304,7 @@ function generateEnhancedPortfolioReport(currentDate, loans, totalPortfolio, fil
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Detailed Portfolio Report</title>
+        <title>${reportTitle}</title>
         <style>
             body { font-family: Arial, sans-serif; margin: 0; padding: 10px; font-size: 12px; }
             .header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #153505; padding-bottom: 10px; }
@@ -1330,7 +1333,7 @@ function generateEnhancedPortfolioReport(currentDate, loans, totalPortfolio, fil
         <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
         <script>
             function exportData(type) {
-                const fileName = 'Detailed_Portfolio_Report.' + type;
+                const fileName = '${exportBaseName}.' + type;
                 const table = document.getElementById("main-table");
                 const wb = XLSX.utils.table_to_book(table);
                 XLSX.writeFile(wb, fileName);
@@ -1339,7 +1342,7 @@ function generateEnhancedPortfolioReport(currentDate, loans, totalPortfolio, fil
     </head>
     <body>
         <div class="header">
-            <h1>Detailed Portfolio Report</h1>
+            <h1>${reportTitle}</h1>
             <div>Sycamore Credit Limited - Generated on ${formatDate(currentDate)}</div>
         </div>
 

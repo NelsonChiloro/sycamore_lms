@@ -58,7 +58,30 @@ $autoload['packages'] = array();
 |
 |	$autoload['libraries'] = array('user_agent' => 'ua');
 */
-$autoload['libraries'] = array('database', 'email', 'session','Toaster');
+$autoload['libraries'] = array('database', 'email', 'Toaster');
+
+if (!function_exists('ci_is_public_login_get')) {
+    function ci_is_public_login_get()
+    {
+        if (PHP_SAPI === 'cli') {
+            return false;
+        }
+        if (isset($_SERVER['REQUEST_METHOD']) && strtoupper($_SERVER['REQUEST_METHOD']) !== 'GET') {
+            return false;
+        }
+        $uri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '';
+        $path = parse_url($uri, PHP_URL_PATH);
+        if (!$path) {
+            return false;
+        }
+        $path = rtrim(str_replace('\\', '/', $path), '/');
+        return (bool) preg_match('#/sycamore_lms(/(auth(/(index|logout))?|login(/index)?)?)?$#i', $path);
+    }
+}
+
+if (!ci_is_public_login_get()) {
+    $autoload['libraries'][] = 'session';
+}
 /*
 | -------------------------------------------------------------------
 |  Auto-load Drivers
@@ -88,7 +111,7 @@ $autoload['drivers'] = array();
 |
 |	$autoload['helper'] = array('url', 'file');
 */
-$autoload['helper'] = array('url', 'file','common_queries_helper','logger_helper','menu_helper','customer_app_api_helper','sms_helper','exportexcel','report_service','report_supervisor');
+$autoload['helper'] = array('url', 'file','common_queries_helper','logger_helper','menu_helper','customer_app_api_helper','sms_helper','exportexcel','report_service','report_supervisor','portfolio_formulae');
 
 /*
 | -------------------------------------------------------------------

@@ -326,324 +326,12 @@ class Loan extends CI_Controller
         );
     }
 
-    /**
-     * Resolve customer display name across id/code mismatches in production data.
-     */
-    private function resolve_loan_customer_name($loan_customer, $customer_type = null)
-    {
-        $customer_ref = trim((string)$loan_customer);
-        $normalized_type = strtolower(trim((string)$customer_type));
-
-        if ($customer_ref === '') {
-            return 'Unknown';
-        }
-
-        $try_individual = function () use ($customer_ref) {
-            return $this->db->select('Firstname, Lastname, ClientId')
-                ->from('individual_customers')
-                ->group_start()
-                ->where('id', $customer_ref)
-                ->or_where('ClientId', $customer_ref)
-                ->group_end()
-                ->limit(1)
-                ->get()
-                ->row();
-        };
-
-        $try_group = function () use ($customer_ref) {
-            return $this->db->select('group_name, group_code')
-                ->from('groups')
-                ->group_start()
-                ->where('group_id', $customer_ref)
-                ->or_where('group_code', $customer_ref)
-                ->group_end()
-                ->limit(1)
-                ->get()
-                ->row();
-        };
-
-        if (in_array($normalized_type, array('individual', 'member'), true)) {
-            $individual = $try_individual();
-            if (!empty($individual)) {
-                return trim((string)$individual->Firstname . ' ' . (string)$individual->Lastname);
-            }
-            $group = $try_group();
-            if (!empty($group)) {
-                return trim((string)$group->group_name . ' (' . (string)$group->group_code . ')');
-            }
-        } elseif (in_array($normalized_type, array('group', 'groups'), true)) {
-            $group = $try_group();
-            if (!empty($group)) {
-                return trim((string)$group->group_name . ' (' . (string)$group->group_code . ')');
-            }
-            $individual = $try_individual();
-            if (!empty($individual)) {
-                return trim((string)$individual->Firstname . ' ' . (string)$individual->Lastname);
-            }
-        } else {
-            $individual = $try_individual();
-            if (!empty($individual)) {
-                return trim((string)$individual->Firstname . ' ' . (string)$individual->Lastname);
-            }
-            $group = $try_group();
-            if (!empty($group)) {
-                return trim((string)$group->group_name . ' (' . (string)$group->group_code . ')');
-            }
-        }
-
-        return 'Unknown';
-    }
-
     private function is_duplicate_entry_error($db_error)
     {
         return is_array($db_error)
             && isset($db_error['code'])
             && (int)$db_error['code'] === 1062;
     }
-
-    private function is_group_zitsamba_product($loan_product)
-    {
-        if (!$loan_product) {
-            return false;
-        }
-
-        $product_name = strtoupper(trim((string)($loan_product->product_name ?? '')));
-        $product_code = strtoupper(trim((string)($loan_product->product_code ?? '')));
-
-        $normalized_name = preg_replace('/[^A-Z0-9]/', '', $product_name);
-        $name_matches = in_array($normalized_name, array(
-            'GROUPLOANPRODUCTZITSAMBALL',
-            'GROUPLOANPRODUCTZITSAMBABT',
-        ), true);
-
-        $code_matches = in_array($product_code, array(
-            'GROUPZITSAMBA',
-            'GROUPZITSAMBABT',
-            'GZITSAMBA',
-            'ZTGLBT',
-            'ZTGLLL',
-        ), true);
-
-        return $name_matches || $code_matches;
-    }
-
-    private function get_group_zitsamba_term_validation_error($loan_product_id, $months)
-    {
-        $loan_product = $this->Loan_products_model->get_by_id($loan_product_id);
-        if (!$this->is_group_zitsamba_product($loan_product)) {
-            return null;
-        }
-
-        if ((int)$months > 4) {
-            return 'Maximum term for Group Loan Product - Zitsamba is 4 months.';
-        }
-
-        return null;
-    }
-
-    private function is_masamba_promotion_lingwe_blantyre($loan_row, $product_row = null)
-    {
-        if (!$loan_row) {
-            return false;
-        }
-
-        if (!$product_row && !empty($loan_row->loan_product)) {
-            $product_row = $this->Loan_products_model->get_by_id($loan_row->loan_product);
-        }
-        if (!$product_row) {
-            return false;
-        }
-
-        $product_code = strtoupper(trim((string)($product_row->product_code ?? '')));
-        $product_name = strtoupper(trim((string)($product_row->product_name ?? '')));
-        $normalized_name = preg_replace('/[^A-Z0-9]/', '', $product_name);
-        $is_masamba = in_array($product_code, array('MASPROLL', 'MASPROBT', 'MASLL', 'MASBT', 'MAIICLL', 'MAIICBT'), true)
-            || $normalized_name === 'MASAMBAPROMOTION'
-            || $normalized_name === 'MASAMBAMAIIC';
-
-        // Handle legacy Masamba variants like "Masamba (MasLL)" and "Masamba (MasBT)".
-        $is_masamba = $is_masamba
-            || in_array($normalized_name, array('MASAMBAMASLL', 'MASAMBAMASBT'), true);
-        if (!$is_masamba) {
-            return false;
-        }
-
-        if (in_array($product_code, array('MASPROLL', 'MASPROBT', 'MASLL', 'MASBT', 'MAIICLL', 'MAIICBT'), true)) {
-            return true;
-        }
-
-        $branch_name = '';
-        $branch_code = '';
-        if (!empty($loan_row->branch)) {
-            $branch = get_branch_for_loan_value($loan_row->branch);
-            if ($branch) {
-                $branch_name = strtoupper(trim((string)($branch->BranchName ?? '')));
-                $branch_code = strtoupper(trim((string)($branch->BranchCode ?? '')));
-            }
-        }
-
-        return strpos($branch_name, 'LINGWE') !== false
-            || strpos($branch_name, 'BLANTYRE') !== false
-            || $branch_code === 'LL'
-            || $branch_code === 'BT';
-    }
-
-    /** Products shown on add-loan / group / calculator forms (all products; no branch filter). */
-    private function loan_products_for_current_user()
-    {
-        return $this->Loan_products_model->get_all();
-    }
-
-    /** Edit forms: full product list (same as create; no branch filter). */
-    private function loan_products_for_edit()
-    {
-        return $this->Loan_products_model->get_all();
-    }
-
-    /**
-     * Branch-based product restriction is disabled; only invalid product id is rejected.
-     *
-     * @param object|null $product loan_products row
-     * @return string|null error message, or null if allowed
-     */
-    private function validate_loan_product_access_for_user($product)
-    {
-        if (!$product) {
-            return 'Invalid loan product.';
-        }
-        return null;
-    }
-
-    /**
-     * Attach late-charge totals used by loan balance summaries and schedule views.
-     */
-    private function enrich_loan_payments_for_display($payments)
-    {
-        $this->load->model('Late_charges_model');
-
-        foreach ($payments as &$payment) {
-            $payment->total_late_charge = isset($payment->total_late_charge) ? $payment->total_late_charge : 0;
-            $payment->total_pay_amount = (float) $payment->amount + (float) $payment->total_late_charge;
-        }
-        unset($payment);
-
-        return $payments;
-    }
-
-    /**
-     * @param array $payments
-     * @param object $loan_row Loan_model row with loan_amount_total
-     * @return object
-     */
-    private function build_loan_payment_balance_summary($payments, $loan_row)
-    {
-        return $this->Payement_schedules_model->summarize_loan_balances(
-            $payments,
-            isset($loan_row->loan_amount_total) ? $loan_row->loan_amount_total : null
-        );
-    }
-
-    private function branches_for_loan_forms()
-    {
-        $this->db->order_by('BranchName', 'ASC');
-        return $this->db->get('branches')->result();
-    }
-
-    /**
-     * @return int|null branches.id from POST, or null if missing/invalid
-     */
-    private function resolve_loan_branch_id_from_post()
-    {
-        $branch_id = (int) $this->input->post('branch_id');
-        if ($branch_id <= 0) {
-            return null;
-        }
-
-        $branch = get_by_id('branches', 'id', $branch_id);
-        return $branch ? (int) $branch->id : null;
-    }
-
-    /**
-     * Resolve disbursement datetime from user input; defaults to now when empty/invalid.
-     *
-     * @param string|null $disbursement_date Y-m-d or datetime string
-     * @return string Y-m-d H:i:s
-     */
-    /**
-     * Redirect back to the loan workflow list that matches the approval action.
-     */
-    private function redirect_after_approval_action($action)
-    {
-        $action = strtoupper(trim((string) $action));
-        $return_to = trim((string) $this->input->post('return_to'));
-        if ($return_to === '') {
-            $return_to = trim((string) $this->input->get('return_to'));
-        }
-        if ($return_to !== '' && strpos($return_to, 'loan/') === 0) {
-            redirect($return_to);
-            return;
-        }
-
-        switch ($action) {
-            case 'APPROVED':
-            case 'REJECT':
-            case 'REJECTED':
-                redirect('loan/initiated');
-                return;
-            case 'RECOMMENDED':
-                redirect('loan/recommend');
-                return;
-            case 'ACTIVE':
-                redirect('loan/approved');
-                return;
-            default:
-                $referer = isset($_SERVER['HTTP_REFERER']) ? (string) $_SERVER['HTTP_REFERER'] : '';
-                if (strpos($referer, 'loan/initiated') !== false) {
-                    redirect('loan/initiated');
-                    return;
-                }
-                if (strpos($referer, 'loan/recommend') !== false) {
-                    redirect('loan/recommend');
-                    return;
-                }
-                if (strpos($referer, 'loan/approved') !== false) {
-                    redirect('loan/approved');
-                    return;
-                }
-                if (strpos($referer, 'loan/edit_approve') !== false) {
-                    redirect('loan/edit_approve');
-                    return;
-                }
-                redirect('loan/initiated');
-        }
-    }
-
-    private function resolve_disbursement_datetime($disbursement_date = null)
-    {
-        if ($disbursement_date === null) {
-            $disbursement_date = $this->input->post('disbursement_date');
-        }
-        if ($disbursement_date === null || $disbursement_date === '') {
-            $disbursement_date = $this->input->get('disbursement_date');
-        }
-
-        $disbursement_date = trim((string) $disbursement_date);
-        if ($disbursement_date === '') {
-            return date('Y-m-d H:i:s');
-        }
-
-        $timestamp = strtotime($disbursement_date);
-        if ($timestamp === false) {
-            return date('Y-m-d H:i:s');
-        }
-
-        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $disbursement_date)) {
-            return date('Y-m-d 00:00:00', $timestamp);
-        }
-
-        return date('Y-m-d H:i:s', $timestamp);
-    }
-
     public function correct_loan(){
         $this->Loan_model->delete_replace_loans();
     }
@@ -940,8 +628,6 @@ class Loan extends CI_Controller
     public function add(){
         $data['customers'] =$this->Individual_customers_model->get_all_active();
         $data['funds_sources'] = $this->Funds_source_model->get_all_funds_sources();
-        $data['loan_types'] = $this->loan_products_for_current_user();
-        $data['branches'] = $this->branches_for_loan_forms();
         $menu_toggle['toggles'] = 23;
         $this->load->view('admin/header', $menu_toggle);
         $this->load->view('loan/add_loan',$data);
@@ -950,8 +636,6 @@ class Loan extends CI_Controller
     public function add_group(){
         $data['customers'] =$this->Groups_model->get_all_active();
         $data['funds_sources'] = $this->Funds_source_model->get_all_funds_sources();
-        $data['loan_types'] = $this->loan_products_for_current_user();
-        $data['branches'] = $this->branches_for_loan_forms();
         $menu_toggle['toggles'] = 23;
         $this->load->view('admin/header', $menu_toggle);
         $this->load->view('loan/add_loan_group',$data);
@@ -961,8 +645,6 @@ class Loan extends CI_Controller
     public function add_group_members(){
         $data['customers'] = $this->Groups_model->get_all_active();
         $data['funds_sources'] = $this->Funds_source_model->get_all_funds_sources();
-        $data['loan_types'] = $this->loan_products_for_current_user();
-        $data['branches'] = $this->branches_for_loan_forms();
         
         // Generate batch number: BATCH + current date + random number
         $batch_number = 'BATCH' . date('Ymd') . rand(1000, 9999);
@@ -1559,9 +1241,18 @@ class Loan extends CI_Controller
                     $this->cash_transaction($loan->loan_id, $transaction_date);
 
                     // Process pay off loan (activates the loan and creates payment schedule)
-                    $this->pay_off_loan($loan->loan_id, $disbursement_datetime);
-                    $this->Payement_schedules_model->correct_premature_loan_closure($loan->loan_id);
-
+                    $this->pay_off_loan($loan->loan_id);
+                    
+                    $disbursed_date = date('Y-m-d H:i:s');
+                    $update_data = array(
+                        'loan_status' => 'ACTIVE',
+                        'disbursed' => 'Yes',
+                        'disbursed_by' => $this->session->userdata('user_id'),
+                        'disbursed_date' => $disbursed_date
+                    );
+                    $this->Loan_model->update($loan->loan_id, $update_data);
+                    // pay_off_loan() already updates/aligns schedule dates during disbursement.
+                    
                     // Check if the update was successful by verifying the database
                     $this->db->where('loan_id', $loan->loan_id);
                     $this->db->where('loan_status', 'ACTIVE');
@@ -2433,7 +2124,7 @@ class Loan extends CI_Controller
                 $this->input->post('worthness_file'),
                 $this->input->post('narration'),
                 $this->input->post('user'),
-                $branch_id_value,
+                $branch_id->id,
                 $this->input->post('funds_source')
             );
 
@@ -2945,16 +2636,99 @@ class Loan extends CI_Controller
         $this->load->view('admin/footer');
     }
     function balances(){
-        $product = $this->input->get('product');
-        $officer= $this->input->get('officer');
-        $loan= $this->input->get('loan');
-        $from= $this->input->get('from');
-        $to= $this->input->get('to');
-        $data['loan_data'] = $this->Loan_model->get_all_balances($product, $officer, $loan, $from, $to);
         $menu_toggle['toggles'] = 23;
+        $this->load->helper('report_service');
         $this->load->view('admin/header', $menu_toggle);
-        $this->load->view('reports/outstanding_balances', $data);
+        $this->load->view('reports/outstanding_balances');
         $this->load->view('admin/footer');
+    }
+
+    function balances_filter()
+    {
+        $this->load->helper('report_service');
+
+        $officer = $this->input->post('officer');
+        $product = $this->input->post('product');
+        $from = $this->input->post('from');
+        $to = $this->input->post('to');
+        $loan_number = trim((string) $this->input->post('loan_number'));
+
+        $officer_name = 'All Officers';
+        if (!empty($officer) && $officer !== 'All') {
+            $officer_row = get_by_id('employees', 'id', (int) $officer);
+            $officer_name = $officer_row
+                ? trim($officer_row->Firstname . ' ' . $officer_row->Lastname)
+                : 'Unknown';
+        }
+
+        $product_name = 'All Products';
+        $product_id = null;
+        if (!empty($product) && $product !== 'All') {
+            $product_id = (int) $product;
+            $product_row = get_by_id('loan_products', 'loan_product_id', $product_id);
+            $product_name = $product_row ? $product_row->product_name : 'Unknown';
+        }
+
+        $loan_id = null;
+        $loan_label = 'All Loans';
+        if ($loan_number !== '') {
+            $loan_row = $this->db->select('loan_id, loan_number')
+                ->from('loan')
+                ->where('loan_number', $loan_number)
+                ->limit(1)
+                ->get()
+                ->row();
+            if ($loan_row) {
+                $loan_id = (int) $loan_row->loan_id;
+                $loan_label = $loan_row->loan_number;
+            } else {
+                $this->toaster->error('Loan number not found: ' . $loan_number);
+                redirect(site_url('loan/balances'));
+                return;
+            }
+        }
+
+        $ch = curl_init();
+        $url = report_service_url('generate-report-outstanding-balances');
+        $payload = array_merge(array(
+            'report_type' => 'OUTSTANDING_BALANCES',
+            'user' => $this->session->userdata('Firstname') . ' ' . $this->session->userdata('Lastname'),
+            'user_id' => $this->session->userdata('user_id'),
+            'officer' => (!empty($officer) && $officer !== 'All') ? $officer : null,
+            'officer_name' => $officer_name,
+            'product' => $product_id,
+            'product_name' => $product_name,
+            'loan' => $loan_id,
+            'loan_label' => $loan_label,
+            'from' => $from !== '' ? $from : null,
+            'to' => $to !== '' ? $to : null,
+        ), report_supervisor_curl_payload());
+
+        $jsonData = json_encode($payload);
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+            'Content-Type: application/json',
+            'Content-Length: ' . strlen($jsonData),
+        ));
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonData);
+
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+        if (curl_errno($ch)) {
+            $this->toaster->error('Error: ' . curl_error($ch));
+            redirect(site_url('loan/balances'));
+        } elseif ($http_code < 200 || $http_code >= 300) {
+            $this->toaster->error('Report service returned HTTP ' . $http_code . '. Ensure bulk_report is running on port 4500.');
+            redirect(site_url('loan/balances'));
+        } else {
+            $this->toaster->success('Outstanding Balances Report is being processed. You may continue with other tasks and check back on the Reports page for progress.');
+            redirect(site_url('report'));
+        }
+
+        curl_close($ch);
     }
     function recommend(){
         $this->load_paginated_loan_list('loan/recommend', $this->loan_list_page_options('recommend', array(
@@ -4920,7 +4694,6 @@ class Loan extends CI_Controller
 
             if (empty($get_account)) {
                 log_message('error', 'pay_off_loan: No teller account found for user ' . $this->session->userdata('user_id'));
-                $this->Payement_schedules_model->correct_premature_loan_closure($loan_id);
                 return;
             }
 
