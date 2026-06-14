@@ -50,10 +50,387 @@ public function portfolio_dashboard(){
     $data = array(
         'settings'      => get_by_id('settings', 'settings_id', '1'),
         'node_base_url' => 'http://localhost:4500',
+        'dashboard_data_url' => base_url('reports/portfolio_dashboard_data'),
     );
     $this->load->view('admin/header', $data);
     $this->load->view('reports/portfolio_dashboard', $data);
     $this->load->view('admin/footer');
+}
+
+private function portfolio_dashboard_map_loan_row($r, $par_rate = null)
+{
+    $gross = (float) $r->principal;
+    $outstanding = (float) $r->outstanding;
+    $accrued = isset($r->accrued_charges)
+        ? (float) $r->accrued_charges
+        : max($outstanding - $gross, 0.0);
+
+    return array(
+        'loan_id' => (int) $r->loan_id,
+        'customer_name' => $r->customer_name,
+        'customer_group' => isset($r->customer_group) ? $r->customer_group : 'N/A',
+        'loan_number' => $r->loan_number,
+        'product_name' => $r->product_name,
+        'branch_name' => $r->branch_name,
+        'officer_name' => $r->officer_name,
+        'relationship_supervisor' => isset($r->relationship_supervisor) ? $r->relationship_supervisor : 'N/A',
+        'loan_date' => isset($r->loan_date) ? $r->loan_date : $r->disbursement_date,
+        'loan_principal_amount' => isset($r->loan_principal_amount) ? (float) $r->loan_principal_amount : 0.0,
+        'gross_loan_portfolio' => $gross,
+        'principal' => $gross,
+        'period' => $r->period,
+        'interest_rate' => (float) $r->interest_rate,
+        'total_loan_amount' => isset($r->total_loan_amount) ? (float) $r->total_loan_amount : 0.0,
+        'installment_amount' => (float) $r->installment_amount,
+        'accrued_charges' => $accrued,
+        'outstanding' => $outstanding,
+        'arrears' => (float) $r->arrears,
+        'days_arrears' => (int) $r->days_arrears,
+        'par_classification' => isset($r->par_classification) ? $r->par_classification : 'Current',
+        'rbm_classification' => isset($r->rbm_classification) ? $r->rbm_classification : 'Standard',
+        'payments_in_arrears' => isset($r->payments_in_arrears) ? (int) $r->payments_in_arrears : 0,
+        'collection_rate' => (float) $r->collection_rate,
+        'last_payment_date' => isset($r->last_payment_date) ? $r->last_payment_date : null,
+        'collateral_value' => isset($r->collateral_value) ? (float) $r->collateral_value : 0.0,
+        'maturity_date' => isset($r->maturity_date) ? $r->maturity_date : null,
+        'total_expected' => (float) $r->total_expected,
+        'actual_payments' => isset($r->actual_payments) ? (float) $r->actual_payments : 0.0,
+        'loan_status' => $r->loan_status,
+        'loan_added_date' => isset($r->loan_added_date) ? $r->loan_added_date : null,
+        'disbursement_date' => $r->disbursement_date,
+        'par_rate' => $par_rate,
+    );
+}
+
+public function portfolio_dashboard_data()
+{
+    $snapshot = $this->db->select('*')
+        ->from('pd_snapshots')
+        ->order_by('snapshot_time', 'DESC')
+        ->limit(1)
+        ->get()
+        ->row();
+
+    if (!$snapshot) {
+        $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(array(
+                'success' => false,
+                'message' => 'No portfolio dashboard snapshot found yet.',
+            ), JSON_INVALID_UTF8_SUBSTITUTE));
+        return;
+    }
+
+    $sid = (int) $snapshot->id;
+    $branches = $this->db->select('*')->from('pd_branches')->where('snapshot_id', $sid)->order_by('outstanding', 'DESC')->get()->result();
+    $products = $this->db->select('*')->from('pd_products')->where('snapshot_id', $sid)->order_by('outstanding_km', 'DESC')->get()->result();
+    $officers = $this->db->select('*')->from('pd_officers')->where('snapshot_id', $sid)->order_by('outstanding', 'DESC')->get()->result();
+    $trend = $this->db->select('*')->from('pd_trend')->where('snapshot_id', $sid)->order_by('month_year', 'ASC')->get()->result();
+    $aging = $this->db->query(
+        "SELECT * FROM pd_aging WHERE snapshot_id = ? ORDER BY FIELD(bucket,'1-30d','31-60d','61-90d','91-180d','>180d')",
+        array($sid)
+    )->result();
+    $loans = $this->db->select('*')->from('pd_loans')->where('snapshot_id', $sid)->get()->result();
+
+    $payload = array(
+        'success' => true,
+        'snapshot' => array(
+            'id' => (int) $snapshot->id,
+            'snapshot_time' => $snapshot->snapshot_time,
+            'as_of_date' => $snapshot->as_of_date,
+            'active_loans' => (int) $snapshot->active_loans,
+            'total_principal' => (float) $snapshot->total_principal,
+            'total_outstanding' => (float) $snapshot->total_outstanding,
+            'total_arrears' => (float) $snapshot->total_arrears,
+            'loans_in_arrears' => (int) $snapshot->loans_in_arrears,
+            'par30' => (float) $snapshot->par30,
+            'par90' => (float) $snapshot->par90,
+            'collection_rate' => (float) $snapshot->collection_rate,
+        ),
+        'branches' => array_map(function ($r) {
+            return array(
+                'branch_name' => $r->branch_name,
+                'loans_count' => (int) $r->loans_count,
+                'outstanding' => (float) $r->outstanding,
+                'arrears' => (float) $r->arrears,
+                'par30' => (float) $r->par30,
+                'par90' => (float) $r->par90,
+                'collection_rate' => (float) $r->collection_rate,
+            );
+        }, $branches),
+        'products' => array_map(function ($r) {
+            return array(
+                'product_name' => $r->product_name,
+                'loans_count' => (int) $r->loans_count,
+                'outstanding_km' => (float) $r->outstanding_km,
+                'arrears_km' => (float) $r->arrears_km,
+                'par_rate' => (float) $r->par_rate,
+            );
+        }, $products),
+        'officers' => array_map(function ($r) {
+            return array(
+                'officer_name' => $r->officer_name,
+                'loans_count' => (int) $r->loans_count,
+                'outstanding' => (float) $r->outstanding,
+                'arrears' => (float) $r->arrears,
+                'par_rate' => (float) $r->par_rate,
+                'collection_rate' => (float) $r->collection_rate,
+            );
+        }, $officers),
+        'trend' => array_map(function ($r) {
+            return array(
+                'month_year' => $r->month_year,
+                'loan_count' => (int) $r->loan_count,
+                'principal_km' => (float) $r->principal_km,
+            );
+        }, $trend),
+        'aging' => array_map(function ($r) {
+            return array(
+                'bucket' => $r->bucket,
+                'loan_count' => (int) $r->loan_count,
+                'arrears_km' => (float) $r->arrears_km,
+                'outstanding_balance' => (float) $r->outstanding_balance,
+            );
+        }, $aging),
+        'loans' => array_map(function ($r) {
+            return $this->portfolio_dashboard_map_loan_row($r);
+        }, $loans),
+    );
+
+    $this->output
+        ->set_content_type('application/json')
+        ->set_output(json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE));
+}
+
+public function portfolio_dashboard_filtered_data()
+{
+    $snapshot = $this->db->select('*')->from('pd_snapshots')->order_by('snapshot_time', 'DESC')->limit(1)->get()->row();
+    if (!$snapshot) {
+        $this->output->set_content_type('application/json')->set_output(json_encode(array('success' => false, 'message' => 'No snapshot found.'), JSON_INVALID_UTF8_SUBSTITUTE));
+        return;
+    }
+
+    $sid = (int) $snapshot->id;
+    $branch = trim((string) $this->input->get('branch', true));
+    $product = trim((string) $this->input->get('product', true));
+    $officer = trim((string) $this->input->get('officer', true));
+    $risk = trim((string) $this->input->get('risk', true));
+    $q = trim((string) $this->input->get('q', true));
+    $min_collection = (float) $this->input->get('min_collection', true);
+
+    $this->db->select('*')->from('pd_loans')->where('snapshot_id', $sid);
+    if ($branch !== '') {
+        $this->db->where('branch_name', $branch);
+    }
+    if ($product !== '') {
+        $this->db->where('product_name', $product);
+    }
+    if ($officer !== '') {
+        $this->db->where('officer_name', $officer);
+    }
+    if ($q !== '') {
+        $this->db->group_start()
+            ->like('loan_number', $q)
+            ->or_like('customer_name', $q)
+            ->or_like('product_name', $q)
+            ->or_like('branch_name', $q)
+            ->or_like('officer_name', $q)
+            ->group_end();
+    }
+    if ($min_collection > 0) {
+        $this->db->where('collection_rate >=', $min_collection);
+    }
+    $rows = $this->db->get()->result();
+
+    $loans = array();
+    foreach ($rows as $r) {
+        $principal = (float) $r->principal;
+        $out = (float) $r->outstanding;
+        $arr = (float) $r->arrears;
+        $par_rate = $out > 0 ? (($arr / $out) * 100.0) : 0.0;
+        if ($risk === 'healthy' && $par_rate >= 10) {
+            continue;
+        }
+        if ($risk === 'monitor' && !($par_rate >= 10 && $par_rate < 20)) {
+            continue;
+        }
+        if ($risk === 'critical' && $par_rate < 20) {
+            continue;
+        }
+
+        $loans[] = $this->portfolio_dashboard_map_loan_row($r, $par_rate);
+    }
+
+    $summary = array(
+        'id' => $sid,
+        'snapshot_time' => $snapshot->snapshot_time,
+        'as_of_date' => $snapshot->as_of_date,
+        'active_loans' => count($loans),
+        'total_principal' => 0.0,
+        'total_outstanding' => 0.0,
+        'total_arrears' => 0.0,
+        'loans_in_arrears' => 0,
+        'par30' => 0.0,
+        'par90' => 0.0,
+        'collection_rate' => 0.0,
+    );
+    $par30_principal = 0.0;
+    $par90_principal = 0.0;
+    $gross_total = 0.0;
+    foreach ($loans as $l) {
+        $summary['total_principal'] += $l['principal'];
+        $summary['total_outstanding'] += $l['outstanding'];
+        $summary['total_arrears'] += $l['arrears'];
+        $summary['collection_rate'] += $l['collection_rate'];
+        $gross_total += $l['principal'];
+        if ((int) $l['days_arrears'] > 0) {
+            $summary['loans_in_arrears']++;
+        }
+        if ((int) $l['days_arrears'] > 30) {
+            $par30_principal += $l['principal'];
+        }
+        if ((int) $l['days_arrears'] > 90) {
+            $par90_principal += $l['principal'];
+        }
+    }
+    if ($summary['active_loans'] > 0) {
+        $summary['collection_rate'] = $summary['collection_rate'] / $summary['active_loans'];
+    }
+    if ($gross_total > 0) {
+        $summary['par30'] = ($par30_principal / $gross_total) * 100.0;
+        $summary['par90'] = ($par90_principal / $gross_total) * 100.0;
+    }
+
+    $groupBy = function ($items, $key) {
+        $map = array();
+        foreach ($items as $i) {
+            $name = $i[$key] !== '' ? $i[$key] : 'Unknown';
+            if (!isset($map[$name])) {
+                $map[$name] = array('name' => $name, 'loans_count' => 0, 'outstanding' => 0.0, 'arrears' => 0.0, 'collection_rate' => 0.0, 'par30_glp' => 0.0, 'par90_glp' => 0.0, 'gross_total' => 0.0);
+            }
+            $map[$name]['loans_count']++;
+            $map[$name]['outstanding'] += $i['outstanding'];
+            $map[$name]['arrears'] += $i['arrears'];
+            $map[$name]['collection_rate'] += $i['collection_rate'];
+            $map[$name]['gross_total'] += $i['principal'];
+            if ((int) $i['days_arrears'] > 30) {
+                $map[$name]['par30_glp'] += $i['principal'];
+            }
+            if ((int) $i['days_arrears'] > 90) {
+                $map[$name]['par90_glp'] += $i['principal'];
+            }
+        }
+        $rows = array();
+        foreach ($map as $m) {
+            $gross = $m['gross_total'];
+            $rows[] = array(
+                'name' => $m['name'],
+                'loans_count' => (int) $m['loans_count'],
+                'outstanding' => (float) $m['outstanding'],
+                'arrears' => (float) $m['arrears'],
+                'par30' => $gross > 0 ? ($m['par30_glp'] / $gross) * 100.0 : 0.0,
+                'par90' => $gross > 0 ? ($m['par90_glp'] / $gross) * 100.0 : 0.0,
+                'collection_rate' => $m['loans_count'] > 0 ? ($m['collection_rate'] / $m['loans_count']) : 0.0,
+            );
+        }
+        usort($rows, function ($a, $b) {
+            return $b['outstanding'] <=> $a['outstanding'];
+        });
+        return $rows;
+    };
+
+    $branches = array_map(function ($r) {
+        return array(
+            'branch_name' => $r['name'],
+            'loans_count' => $r['loans_count'],
+            'outstanding' => $r['outstanding'],
+            'arrears' => $r['arrears'],
+            'par30' => $r['par30'],
+            'par90' => $r['par90'],
+            'collection_rate' => $r['collection_rate'],
+        );
+    }, $groupBy($loans, 'branch_name'));
+    $products = array_map(function ($r) {
+        return array(
+            'product_name' => $r['name'],
+            'loans_count' => $r['loans_count'],
+            'outstanding_km' => $r['outstanding'] / 1000000.0,
+            'arrears_km' => $r['arrears'] / 1000000.0,
+            'par_rate' => $r['par30'],
+        );
+    }, $groupBy($loans, 'product_name'));
+    $officers = array_map(function ($r) {
+        return array(
+            'officer_name' => $r['name'],
+            'loans_count' => $r['loans_count'],
+            'outstanding' => $r['outstanding'],
+            'arrears' => $r['arrears'],
+            'par_rate' => $r['par30'],
+            'collection_rate' => $r['collection_rate'],
+        );
+    }, $groupBy($loans, 'officer_name'));
+
+    $trendMap = array();
+    foreach ($loans as $l) {
+        if (empty($l['disbursement_date'])) {
+            continue;
+        }
+        $ts = strtotime($l['disbursement_date']);
+        if ($ts === false) {
+            continue;
+        }
+        $ym = date('Y-m', $ts);
+        if (!isset($trendMap[$ym])) {
+            $trendMap[$ym] = array('month_year' => $ym, 'loan_count' => 0, 'principal_km' => 0.0);
+        }
+        $trendMap[$ym]['loan_count']++;
+        $trendMap[$ym]['principal_km'] += ($l['principal'] / 1000000.0);
+    }
+    ksort($trendMap);
+    $trend = array_values($trendMap);
+
+    $agingBuckets = array(
+        array('bucket' => '1-30d', 'lo' => 1, 'hi' => 30),
+        array('bucket' => '31-60d', 'lo' => 31, 'hi' => 60),
+        array('bucket' => '61-90d', 'lo' => 61, 'hi' => 90),
+        array('bucket' => '91-180d', 'lo' => 91, 'hi' => 180),
+        array('bucket' => '>180d', 'lo' => 181, 'hi' => 999999),
+    );
+    $aging = array();
+    foreach ($agingBuckets as $b) {
+        $cnt = 0;
+        $arr = 0.0;
+        $glp = 0.0;
+        foreach ($loans as $l) {
+            $d = (int) $l['days_arrears'];
+            if ($d >= $b['lo'] && $d <= $b['hi']) {
+                $cnt++;
+                $arr += $l['arrears'];
+                $glp += $l['principal'];
+            }
+        }
+        $aging[] = array(
+            'bucket' => $b['bucket'],
+            'loan_count' => $cnt,
+            'arrears_km' => $arr / 1000000.0,
+            'outstanding_balance' => $glp,
+        );
+    }
+
+    $payload = array(
+        'success' => true,
+        'snapshot' => $summary,
+        'branches' => $branches,
+        'products' => $products,
+        'officers' => $officers,
+        'trend' => $trend,
+        'aging' => $aging,
+        'loans' => $loans,
+    );
+
+    $this->output
+        ->set_content_type('application/json')
+        ->set_output(json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE));
 }
 
 public function caparfilter(){
@@ -248,6 +625,9 @@ private function get_default_summary_metrics()
         'outstanding_lc' => 0,
         'outstanding_af' => 0,
         'total_unpaid' => 0,
+        'gross_loan_portfolio' => 0,
+        'accrued_charges' => 0,
+        'total_outstanding_balance' => 0,
         'total_arrears' => 0,
         'one_day_arrears' => 0,
         'three_day_arrears' => 0,
@@ -275,32 +655,37 @@ private function get_summary_metrics()
     $monthStart = date('Y-m-01');
     $nextMonthStart = date('Y-m-01', strtotime('first day of next month'));
 
+    $unpaidPrincipal = sql_unpaid_principal_expr('ps');
+    $accruedChargesCase = sql_portfolio_accrued_charges_case('ps', "'{$today}'");
+    $arrearsCase = sql_portfolio_arrears_case('ps', 'CURDATE()');
+
     $metricsSql = "SELECT
 			SUM(CASE WHEN ps.status = 'PAID' THEN COALESCE(ps.interest, 0) ELSE 0 END) AS paid_interest,
 			SUM(CASE WHEN ps.status = 'PAID' THEN COALESCE(ps.ploan_cover, 0) ELSE 0 END) AS paid_lc,
 			SUM(CASE WHEN ps.status = 'PAID' THEN COALESCE(ps.padmin_fee, 0) ELSE 0 END) AS paid_af,
-			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' THEN COALESCE(ps.interest, 0) ELSE 0 END) AS outstanding_interest,
-			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' THEN COALESCE(ps.ploan_cover, 0) ELSE 0 END) AS outstanding_lc,
-			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' THEN COALESCE(ps.padmin_fee, 0) ELSE 0 END) AS outstanding_af,
-            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS total_unpaid,
-            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS total_arrears,
-            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS one_day_arrears,
-            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 3 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS three_day_arrears,
-            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS week_arrears,
-            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS month_arrears,
-            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 60 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS two_month_arrears,
-            SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS three_month_arrears,
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' THEN {$unpaidPrincipal} ELSE 0 END) AS gross_loan_portfolio,
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' THEN {$accruedChargesCase} ELSE 0 END) AS accrued_charges,
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' THEN {$unpaidPrincipal} ELSE 0 END)
+			    + SUM(CASE WHEN l.loan_status = 'ACTIVE' THEN {$accruedChargesCase} ELSE 0 END) AS total_outstanding_balance,
+            SUM(CASE WHEN l.loan_status = 'ACTIVE' THEN {$unpaidPrincipal} ELSE 0 END) AS total_unpaid,
+            SUM(CASE WHEN l.loan_status = 'ACTIVE' THEN {$arrearsCase} ELSE 0 END) AS total_arrears,
+            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS one_day_arrears,
+            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 3 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS three_day_arrears,
+            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS week_arrears,
+            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS month_arrears,
+            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 60 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS two_month_arrears,
+            SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END) AS three_month_arrears,
             ROUND(
                 (
-                    SUM(CASE WHEN l.loan_status IN ('APPROVED', 'ACTIVE') AND l.disbursed = 'Yes' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule < CURDATE() THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END)
+                    SUM(CASE WHEN l.loan_status = 'ACTIVE' THEN {$arrearsCase} ELSE 0 END)
                     /
-                    NULLIF(SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') THEN COALESCE(ps.amount, 0) - COALESCE(ps.paid_amount, 0) ELSE 0 END), 0)
+                    NULLIF(SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') THEN {$unpaidPrincipal} ELSE 0 END), 0)
                 ) * 100,
                 2
             ) AS par_percentage,
-			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= ? AND ps.payment_schedule < ? THEN COALESCE(ps.amount, 0) ELSE 0 END) AS payments_today,
-			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= ? AND ps.payment_schedule < ? THEN COALESCE(ps.amount, 0) ELSE 0 END) AS payments_week,
-			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status = 'NOT PAID' AND ps.payment_schedule >= ? AND ps.payment_schedule < ? THEN COALESCE(ps.amount, 0) ELSE 0 END) AS payments_month
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= ? AND ps.payment_schedule < ? THEN COALESCE(ps.amount, 0) ELSE 0 END) AS payments_today,
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= ? AND ps.payment_schedule < ? THEN COALESCE(ps.amount, 0) ELSE 0 END) AS payments_week,
+			SUM(CASE WHEN l.loan_status = 'ACTIVE' AND ps.status IN ('NOT PAID', 'PARTIAL PAID') AND ps.payment_schedule >= ? AND ps.payment_schedule < ? THEN COALESCE(ps.amount, 0) ELSE 0 END) AS payments_month
 		FROM payement_schedules ps
 		JOIN loan l ON l.loan_id = ps.loan_id";
 
@@ -317,9 +702,12 @@ private function get_summary_metrics()
         $stats['paid_interest'] = (float) $metrics->paid_interest;
         $stats['paid_lc'] = (float) $metrics->paid_lc;
         $stats['paid_af'] = (float) $metrics->paid_af;
-        $stats['outstanding_interest'] = (float) $metrics->outstanding_interest;
-        $stats['outstanding_lc'] = (float) $metrics->outstanding_lc;
-        $stats['outstanding_af'] = (float) $metrics->outstanding_af;
+        $stats['gross_loan_portfolio'] = (float) $metrics->gross_loan_portfolio;
+        $stats['accrued_charges'] = (float) $metrics->accrued_charges;
+        $stats['total_outstanding_balance'] = (float) $metrics->total_outstanding_balance;
+        $stats['outstanding_interest'] = (float) $metrics->accrued_charges;
+        $stats['outstanding_lc'] = 0;
+        $stats['outstanding_af'] = 0;
         $stats['total_unpaid'] = (float) $metrics->total_unpaid;
         $stats['total_arrears'] = (float) $metrics->total_arrears;
         $stats['one_day_arrears'] = (float) $metrics->one_day_arrears;
@@ -339,6 +727,7 @@ private function get_summary_metrics()
 
 private function get_summary_product_balances()
 {
+    $unpaidPrincipal = sql_unpaid_principal_expr('ps');
 	$sql = "SELECT
 			lp.loan_product_id,
 			lp.product_name,
@@ -348,11 +737,10 @@ private function get_summary_product_balances()
         LEFT JOIN (
             SELECT
                 l.loan_product,
-                SUM(CASE WHEN ps.status = 'NOT PAID' THEN COALESCE(ps.principal, 0) ELSE 0 END) AS outstanding_principal
+                SUM({$unpaidPrincipal}) AS outstanding_principal
             FROM loan l
             JOIN payement_schedules ps ON ps.loan_id = l.loan_id
             WHERE l.loan_status = 'ACTIVE'
-              AND ps.status IN ('NOT PAID', 'PARTIAL PAID')
             GROUP BY l.loan_product
         ) product_balances ON product_balances.loan_product = lp.loan_product_id
 		ORDER BY lp.product_name ASC";

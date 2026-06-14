@@ -4390,33 +4390,43 @@ class Loan_model extends CI_Model
 		return $result;
 	}
 	function get_all_balances($product, $officer, $loan, $from, $to){
-		$this->db->select('*,e.Firstname as efname,ic.Firstname as ifname,ic.Lastname as ilname,e.Lastname as elname,ps.interest as pinterest, ps.principal as pprincipal, ps.amount as pamount');
-		$this->db->from('payement_schedules  ps');
+		$this->load->helper('portfolio_formulae');
+		$unpaid_principal = sql_unpaid_principal_expr('ps');
+		$accrued_charges = sql_portfolio_accrued_charges_case('ps');
+		$portfolio_outstanding = sql_portfolio_outstanding_balance_expr('ps');
+
+		$this->db->select(
+			'*, e.Firstname as efname, ic.Firstname as ifname, ic.Lastname as ilname, e.Lastname as elname, '
+			. 'ps.interest as pinterest, ps.principal as pprincipal, ps.amount as pamount, '
+			. $unpaid_principal . ' AS unpaid_principal, '
+			. $accrued_charges . ' AS accrued_charges, '
+			. $portfolio_outstanding . ' AS portfolio_outstanding',
+			false
+		);
+		$this->db->from('payement_schedules ps');
 		$this->db->join('loan l', 'l.loan_id = ps.loan_id');
 		$this->db->join('individual_customers ic', 'ic.id = ps.customer AND ps.customer_type = "individual"', 'LEFT');
-		$this->db->join('groups g', 'g.group_id = ps.customer AND ps.customer_type = "group"', 'LEFT');
+		$this->db->join('`groups` g', 'g.group_id = ps.customer AND ps.customer_type = "group"', 'LEFT');
 		$this->db->join('loan_products', 'loan_products.loan_product_id = l.loan_product', 'LEFT');
 		$this->db->join('employees e', 'l.loan_added_by = e.id', 'LEFT');
-//		$this->db->where('ps.status', 'NOT PAID');
 		$this->db->where('l.loan_status', 'ACTIVE');
-		if(!empty($product)){
+		if (!empty($product)) {
 			$this->db->where('l.loan_product', $product);
 		}
-		if(!empty($officer)){
+		if (!empty($officer)) {
 			$this->db->where('l.loan_added_by', $officer);
 		}
-		if(!empty($loan)){
+		if (!empty($loan)) {
 			$this->db->where('l.loan_id', $loan);
 		}
-		if($from !="" && $to !=""){
-			$this->db->where('payment_schedule BETWEEN "'. date('Y-m-d', strtotime($from)). '" and "'. date('Y-m-d', strtotime($to)).'"');
-
+		if ($from != '' && $to != '') {
+			$this->db->where('payment_schedule BETWEEN "' . date('Y-m-d', strtotime($from)) . '" and "' . date('Y-m-d', strtotime($to)) . '"');
 		}
+		$this->db->order_by('l.loan_number', 'ASC');
+		$this->db->order_by('ps.payment_number', 'ASC');
 		$query = $this->db->get();
 
-		$result = $query->result();
-
-		return $result;
+		return $query->result();
 	}
 	function get_all_balances_by_product($product){
 		$this->db->select('*,ps.interest as pinterest, ps.principal as pprincipal, ps.amount as pamount');

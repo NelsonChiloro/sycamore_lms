@@ -2945,16 +2945,99 @@ class Loan extends CI_Controller
         $this->load->view('admin/footer');
     }
     function balances(){
-        $product = $this->input->get('product');
-        $officer= $this->input->get('officer');
-        $loan= $this->input->get('loan');
-        $from= $this->input->get('from');
-        $to= $this->input->get('to');
-        $data['loan_data'] = $this->Loan_model->get_all_balances($product, $officer, $loan, $from, $to);
         $menu_toggle['toggles'] = 23;
+        $this->load->helper('report_service');
         $this->load->view('admin/header', $menu_toggle);
-        $this->load->view('reports/outstanding_balances', $data);
+        $this->load->view('reports/outstanding_balances');
         $this->load->view('admin/footer');
+    }
+
+    function balances_filter()
+    {
+        $this->load->helper('report_service');
+
+        $officer = $this->input->post('officer');
+        $product = $this->input->post('product');
+        $from = $this->input->post('from');
+        $to = $this->input->post('to');
+        $loan_number = trim((string) $this->input->post('loan_number'));
+
+        $officer_name = 'All Officers';
+        if (!empty($officer) && $officer !== 'All') {
+            $officer_row = get_by_id('employees', 'id', (int) $officer);
+            $officer_name = $officer_row
+                ? trim($officer_row->Firstname . ' ' . $officer_row->Lastname)
+                : 'Unknown';
+        }
+
+        $product_name = 'All Products';
+        $product_id = null;
+        if (!empty($product) && $product !== 'All') {
+            $product_id = (int) $product;
+            $product_row = get_by_id('loan_products', 'loan_product_id', $product_id);
+            $product_name = $product_row ? $product_row->product_name : 'Unknown';
+        }
+
+        $loan_id = null;
+        $loan_label = 'All Loans';
+        if ($loan_number !== '') {
+            $loan_row = $this->db->select('loan_id, loan_number')
+                ->from('loan')
+                ->where('loan_number', $loan_number)
+                ->limit(1)
+                ->get()
+                ->row();
+            if ($loan_row) {
+                $loan_id = (int) $loan_row->loan_id;
+                $loan_label = $loan_row->loan_number;
+            } else {
+                $this->toaster->error('Loan number not found: ' . $loan_number);
+                redirect(site_url('loan/balances'));
+                return;
+            }
+        }
+
+        $ch = curl_init();
+        $url = report_service_url('generate-report-outstanding-balances');
+        $payload = array_merge(array(
+            'report_type' => 'OUTSTANDING_BALANCES',
+            'user' => $this->session->userdata('Firstname') . ' ' . $this->session->userdata('Lastname'),
+            'user_id' => $this->session->userdata('user_id'),
+            'officer' => (!empty($officer) && $officer !== 'All') ? $officer : null,
+            'officer_name' => $officer_name,
+            'product' => $product_id,
+            'product_name' => $product_name,
+            'loan' => $loan_id,
+            'loan_label' => $loan_label,
+            'from' => $from !== '' ? $from : null,
+            'to' => $to !== '' ? $to : null,
+        ), report_supervisor_curl_payload());
+
+        $jsonData = json_encode($payload);
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+            'Content-Type: application/json',
+            'Content-Length: ' . strlen($jsonData),
+        ));
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonData);
+
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+        if (curl_errno($ch)) {
+            $this->toaster->error('Error: ' . curl_error($ch));
+            redirect(site_url('loan/balances'));
+        } elseif ($http_code < 200 || $http_code >= 300) {
+            $this->toaster->error('Report service returned HTTP ' . $http_code . '. Ensure bulk_report is running on port 4500.');
+            redirect(site_url('loan/balances'));
+        } else {
+            $this->toaster->success('Outstanding Balances Report is being processed. You may continue with other tasks and check back on the Reports page for progress.');
+            redirect(site_url('report'));
+        }
+
+        curl_close($ch);
     }
     function recommend(){
         $this->load_paginated_loan_list('loan/recommend', $this->loan_list_page_options('recommend', array(
