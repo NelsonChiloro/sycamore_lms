@@ -94,22 +94,6 @@ class Payement_schedules_model extends CI_Model
 
         foreach ($schedules as $schedule) {
             $schedule_amount = (float)$schedule->amount;
-            // Zero-amount rows must never be treated as "fully paid" (0.0001 >= 0 was true),
-            // which corrupted statuses and contributed to premature loan closure checks.
-            if ($schedule_amount <= 0.0001) {
-                if (abs((float)$schedule->paid_amount) > 0.0001
-                    || (string)$schedule->status !== 'NOT PAID'
-                    || (string)$schedule->partial_paid !== 'NO') {
-                    $this->db->where('id', (int)$schedule->id)->update($this->table, array(
-                        'paid_amount' => 0,
-                        'status' => 'NOT PAID',
-                        'partial_paid' => 'NO',
-                        'paid_date' => null,
-                    ));
-                }
-                continue;
-            }
-
             $allocated = min($remaining_paid, $schedule_amount);
             $remaining_paid -= $allocated;
 
@@ -141,112 +125,6 @@ class Payement_schedules_model extends CI_Model
 
         $next_payment_id = ($first_incomplete !== null) ? $first_incomplete : ($last_payment_number + 1);
         $this->db->where('loan_id', $loan_number)->update('loan', array('next_payment_id' => $next_payment_id));
-    }
-
-    /**
-     * Lightweight repair: if repayments exist in transactions but schedules are stale,
-     * apply only the missing paid delta sequentially across open schedules.
-     */
-    /**
-     * Explicit repair: resets all schedule paid state to zero then re-applies
-     * actual payments from the transactions table sequentially.
-     *
-     * Uses one payment amount per unique transaction ref (to avoid legacy
-     * cumulative duplicates). Total is hard-capped to total_schedule_amount.
-     * Safe to call from a controller; never called automatically on reads.
-     *
-     * Returns an array with keys: total_txn_paid, total_schedule_amount, applied.
-     */
-    public function repair_loan_payment_state($loan_number)
-    {
-        $loan_number = (int)$loan_number;
-        if ($loan_number <= 0) {
-            return array('error' => 'Invalid loan id');
-        }
-
-        $schedules = $this->db->select('id, amount, payment_number')
-            ->from($this->table)
-            ->where('loan_id', $loan_number)
-            ->order_by('payment_number', 'ASC')
-            ->get()
-            ->result();
-
-        if (empty($schedules)) {
-            return array('error' => 'No schedules found');
-        }
-
-        $total_schedule_amount = 0.0;
-        foreach ($schedules as $s) {
-            $total_schedule_amount += (float)$s->amount;
-        }
-
-        // Sum ONE amount per unique ref (each ref = one real payment event).
-        // MAX(amount) per ref guards against cumulative-write legacy rows.
-        $txn_row = $this->db->query("
-            SELECT COALESCE(SUM(max_per_ref), 0) AS total_paid,
-                   MAX(date_stamp)               AS last_date
-            FROM (
-                SELECT ref, MAX(amount) AS max_per_ref, MAX(date_stamp) AS date_stamp
-                FROM transactions
-                WHERE loan_id         = ?
-                  AND transaction_type = 3
-                  AND amount           > 0
-                GROUP BY ref
-            ) AS unique_refs
-        ", array($loan_number))->row();
-
-        $raw_total = $txn_row ? (float)$txn_row->total_paid : 0.0;
-
-        // Hard cap: never apply more than the total owed.
-        $to_apply = min($raw_total, $total_schedule_amount);
-
-        $fallback_date = ($txn_row && !empty($txn_row->last_date)
-            && $txn_row->last_date !== '0000-00-00'
-            && $txn_row->last_date !== '0000-00-00 00:00:00')
-            ? date('Y-m-d', strtotime($txn_row->last_date))
-            : date('Y-m-d');
-
-        // Step 1: reset every schedule row to unpaid.
-        $this->db->where('loan_id', $loan_number)->update($this->table, array(
-            'paid_amount'  => 0,
-            'paid_date'    => null,
-            'status'       => 'NOT PAID',
-            'partial_paid' => 'NO',
-        ));
-
-        // Step 2: apply sequentially from earliest installment.
-        $remaining = $to_apply;
-        foreach ($schedules as $schedule) {
-            if ($remaining <= 0.001) {
-                break;
-            }
-
-            $schedule_amount = (float)$schedule->amount;
-            if ($schedule_amount <= 0) {
-                continue;
-            }
-
-            $apply_now     = min($schedule_amount, $remaining);
-            $is_fully_paid = ($apply_now + 0.0001) >= $schedule_amount;
-
-            $this->db->where('id', (int)$schedule->id)->update($this->table, array(
-                'paid_amount'  => $apply_now,
-                'paid_date'    => $fallback_date,
-                'status'       => $is_fully_paid ? 'PAID' : 'PARTIAL PAID',
-                'partial_paid' => $is_fully_paid ? 'NO' : 'YES',
-            ));
-
-            $remaining -= $apply_now;
-        }
-
-        // Step 3: re-normalise to fix next_payment_id and any status edge cases.
-        $this->normalize_schedule_payment_allocation($loan_number);
-
-        return array(
-            'total_txn_paid'       => $raw_total,
-            'total_schedule_amount'=> $total_schedule_amount,
-            'applied'              => $to_apply,
-        );
     }
 
     /**
@@ -458,8 +336,6 @@ class Payement_schedules_model extends CI_Model
 	function get_all_by_id($id)
 	{
         $this->normalize_schedule_payment_allocation($id);
-        $this->recalculate_loan_balances($id);
-        $this->correct_premature_loan_closure($id);
 		$this->db->select('*');
 		$this->db->order_by($this->id, $this->order);
 		$this->db->join('loan','loan.loan_id = payement_schedules.loan_id');
