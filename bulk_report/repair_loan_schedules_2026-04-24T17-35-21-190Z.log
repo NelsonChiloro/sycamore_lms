@@ -1,0 +1,8 @@
+[2026-04-24T17:36:05.485Z] ================================================================================
+[2026-04-24T17:36:05.486Z] STARTING LOAN PAYMENT REPAIR PROCESS
+[2026-04-24T17:36:05.486Z] ================================================================================
+[2026-04-24T17:36:05.487Z] FATAL ERROR: You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'current_user' at line 1
+[2026-04-24T17:36:05.487Z] Error: You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'current_user' at line 1
+    at PromisePoolConnection.query (/var/www/html/sycamore.finacerealm-mw.com/public_html/bulk_report/node_modules/mysql2/lib/promise/connection.js:29:22)
+    at main (/var/www/html/sycamore.finacerealm-mw.com/public_html/bulk_report/repair_loan_schedules.js:153:45)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)

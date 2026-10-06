@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Batch Loan Date Editor</title>
+	<style>
+		:root {
+			--bg: #f4efe6;
+			--surface: rgba(255, 250, 242, 0.92);
+			--surface-strong: #fff8ef;
+			--ink: #1e1b18;
+			--muted: #6f6458;
+			--accent: #0f766e;
+			--accent-strong: #115e59;
+			--danger: #b42318;
+			--border: rgba(30, 27, 24, 0.12);
+			--shadow: 0 24px 60px rgba(54, 39, 20, 0.12);
+		}
+
+		* {
+			box-sizing: border-box;
+		}
+
+		body {
+			margin: 0;
+			min-height: 100vh;
+			font-family: Georgia, "Times New Roman", serif;
+			color: var(--ink);
+			background:
+				radial-gradient(circle at top right, rgba(15, 118, 110, 0.18), transparent 30%),
+				radial-gradient(circle at bottom left, rgba(180, 35, 24, 0.12), transparent 28%),
+				linear-gradient(135deg, #efe5d2 0%, #f7f1e7 38%, #efe7dc 100%);
+			padding: 32px 18px;
+		}
+
+		.shell {
+			max-width: 1080px;
+			margin: 0 auto;
+			display: grid;
+			gap: 24px;
+		}
+
+		.hero,
+		.panel,
+		.results {
+			background: var(--surface);
+			border: 1px solid var(--border);
+			border-radius: 24px;
+			box-shadow: var(--shadow);
+			backdrop-filter: blur(10px);
+		}
+
+		.hero {
+			padding: 28px;
+		}
+
+		.eyebrow {
+			display: inline-block;
+			padding: 6px 12px;
+			border-radius: 999px;
+			background: rgba(15, 118, 110, 0.11);
+			color: var(--accent-strong);
+			font-size: 12px;
+			letter-spacing: 0.14em;
+			text-transform: uppercase;
+		}
+
+		h1 {
+			margin: 14px 0 10px;
+			font-size: clamp(2rem, 4vw, 3.5rem);
+			line-height: 0.98;
+			font-weight: 600;
+		}
+
+		.hero p,
+		.hint,
+		.status,
+		td,
+		th,
+		label,
+		input,
+		textarea,
+		button {
+			font-family: "Trebuchet MS", Verdana, sans-serif;
+		}
+
+		.hero p {
+			margin: 0;
+			max-width: 760px;
+			color: var(--muted);
+			font-size: 1rem;
+			line-height: 1.6;
+		}
+
+		.panel {
+			padding: 24px;
+		}
+
+		form {
+			display: grid;
+			gap: 18px;
+		}
+
+		.fields {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+			gap: 16px;
+		}
+
+		label {
+			display: grid;
+			gap: 8px;
+			font-size: 0.95rem;
+			color: var(--ink);
+		}
+
+		input,
+		textarea {
+			width: 100%;
+			border: 1px solid rgba(30, 27, 24, 0.18);
+			background: var(--surface-strong);
+			border-radius: 14px;
+			padding: 14px 16px;
+			font-size: 0.96rem;
+			color: var(--ink);
+		}
+
+		textarea {
+			min-height: 240px;
+			resize: vertical;
+			line-height: 1.5;
+		}
+
+		.hint {
+			margin: 0;
+			color: var(--muted);
+			font-size: 0.9rem;
+			line-height: 1.5;
+		}
+
+		.actions {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 12px;
+			align-items: center;
+		}
+
+		button {
+			border: 0;
+			border-radius: 999px;
+			padding: 14px 20px;
+			font-size: 0.96rem;
+			cursor: pointer;
+			transition: transform 160ms ease, opacity 160ms ease, background 160ms ease;
+		}
+
+		button:hover {
+			transform: translateY(-1px);
+		}
+
+		button:disabled {
+			opacity: 0.6;
+			cursor: wait;
+			transform: none;
+		}
+
+		.primary {
+			background: var(--accent);
+			color: #fff;
+		}
+
+		.secondary {
+			background: rgba(17, 94, 89, 0.08);
+			color: var(--accent-strong);
+		}
+
+		.status {
+			min-height: 22px;
+			color: var(--muted);
+			font-size: 0.94rem;
+		}
+
+		.status.error {
+			color: var(--danger);
+		}
+
+		.results {
+			overflow: hidden;
+		}
+
+		.results-header {
+			padding: 20px 24px 0;
+		}
+
+		.results-grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+			gap: 12px;
+			padding: 18px 24px;
+		}
+
+		.metric {
+			background: rgba(255, 255, 255, 0.54);
+			border: 1px solid var(--border);
+			border-radius: 16px;
+			padding: 14px;
+		}
+
+		.metric strong {
+			display: block;
+			font-size: 1.5rem;
+			margin-bottom: 4px;
+		}
+
+		.tables {
+			display: grid;
+			gap: 18px;
+			padding: 0 24px 24px;
+		}
+
+		table {
+			width: 100%;
+			border-collapse: collapse;
+			overflow: hidden;
+			border-radius: 16px;
+			border: 1px solid var(--border);
+			background: rgba(255, 255, 255, 0.7);
+		}
+
+		th,
+		td {
+			text-align: left;
+			padding: 12px 14px;
+			border-bottom: 1px solid rgba(30, 27, 24, 0.08);
+			font-size: 0.92rem;
+		}
+
+		th {
+			background: rgba(15, 118, 110, 0.08);
+			color: var(--accent-strong);
+		}
+
+		.empty {
+			padding: 18px 24px 24px;
+			color: var(--muted);
+		}
+
+		@media (max-width: 720px) {
+			.hero,
+			.panel,
+			.results {
+				border-radius: 18px;
+			}
+
+			.tables {
+				padding: 0 12px 16px;
+			}
+
+			.results-header,
+			.results-grid,
+			.empty {
+				padding-left: 12px;
+				padding-right: 12px;
+			}
+
+			table {
+				display: block;
+				overflow-x: auto;
+			}
+		}
+	</style>
+</head>
+<body>
+	<div class="shell">
+		<section class="hero">
+			<span class="eyebrow">Node Batch Tool</span>
+			<h1>Bulk Loan Date Correction</h1>
+			<p>Paste the affected loan numbers, then submit one batch. The server reads each loan's existing stored loan date automatically, rebuilds repayment schedules using the same product rules as the legacy system, and restores any posted payments by installment number so paid entries are not lost.</p>
+		</section>
+
+		<section class="panel">
+			<form id="batch-form">
+				<div class="fields">
+					<label>
+						Operator name
+						<input id="operator-name" name="operatorName" type="text" placeholder="Optional">
+					</label>
+					<label>
+						Batch note
+						<input id="batch-note" name="batchNote" type="text" placeholder="Optional reference or reason">
+					</label>
+				</div>
+
+				<label>
+					Loan list
+					<textarea id="entries" name="entries" placeholder="SCL202502062568&#10;SCL202502062570&#10;SCL202507103448"></textarea>
+				</label>
+
+				<p class="hint">Use one loan number per line. The system will fetch and record the loan date already stored on each loan automatically, so users do not need to type any dates here. For monthly cutoff products, the effective schedule date may still land on month start or month end according to existing loan rules.</p>
+
+				<div class="actions">
+					<button class="primary" type="submit" id="submit-btn">Run batch update</button>
+					<button class="secondary" type="button" id="sample-btn">Load sample</button>
+				</div>
+
+				<div id="status" class="status"></div>
+			</form>
+		</section>
+
+		<section class="results" id="results-panel" hidden>
+			<div class="results-header">
+				<h2>Batch results</h2>
+			</div>
+			<div class="results-grid" id="metrics"></div>
+			<div class="tables">
+				<div>
+					<h3>Successful updates</h3>
+					<table id="success-table">
+						<thead>
+							<tr>
+								<th>Loan Number</th>
+								<th>Result</th>
+								<th>Recorded Loan Date</th>
+								<th>Effective Date</th>
+								<th>Schedules</th>
+								<th>Next Payment</th>
+							</tr>
+						</thead>
+						<tbody></tbody>
+					</table>
+				</div>
+				<div>
+					<h3>Failed updates</h3>
+					<table id="error-table">
+						<thead>
+							<tr>
+								<th>Loan Number</th>
+								<th>Error</th>
+							</tr>
+						</thead>
+						<tbody></tbody>
+					</table>
+				</div>
+			</div>
+			<div class="empty" id="empty-message" hidden>No row results returned.</div>
+		</section>
+	</div>
+
+	<script>
+		const form = document.getElementById('batch-form');
+		const entries = document.getElementById('entries');
+		const submitButton = document.getElementById('submit-btn');
+		const sampleButton = document.getElementById('sample-btn');
+		const statusEl = document.getElementById('status');
+		const resultsPanel = document.getElementById('results-panel');
+		const metricsEl = document.getElementById('metrics');
+		const successBody = document.querySelector('#success-table tbody');
+		const errorBody = document.querySelector('#error-table tbody');
+		const emptyMessage = document.getElementById('empty-message');
+
+		sampleButton.addEventListener('click', () => {
+			entries.value = [
+				'SCL202502062568',
+				'SCL202502062570',
+				'SCL202507103448'
+			].join('\n');
+		});
+
+		form.addEventListener('submit', async (event) => {
+			event.preventDefault();
+
+			statusEl.className = 'status';
+			statusEl.textContent = 'Submitting batch update...';
+			submitButton.disabled = true;
+			resultsPanel.hidden = true;
+
+			try {
+				const response = await fetch('/loan-date-batch-update', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json'
+					},
+					body: JSON.stringify({
+						operatorName: document.getElementById('operator-name').value,
+						batchNote: document.getElementById('batch-note').value,
+						entries: entries.value
+					})
+				});
+
+				const data = await response.json();
+				if (!response.ok && response.status !== 207) {
+					throw new Error(data.message || 'Batch update failed.');
+				}
+
+				renderResults(data);
+				statusEl.textContent = data.message || 'Batch update completed.';
+			} catch (error) {
+				statusEl.className = 'status error';
+				statusEl.textContent = error.message;
+			} finally {
+				submitButton.disabled = false;
+			}
+		});
+
+		function renderResults(data) {
+			resultsPanel.hidden = false;
+			metricsEl.innerHTML = [
+				metricCard('Processed', data.processed || 0),
+				metricCard('Successful', data.successful || 0),
+				metricCard('Unchanged', data.unchanged || 0),
+				metricCard('Failed', data.failed || 0)
+			].join('');
+
+			const results = Array.isArray(data.results) ? data.results : [];
+			const errors = Array.isArray(data.errors) ? data.errors : [];
+
+			successBody.innerHTML = results.map((item) => `
+				<tr>
+					<td>${escapeHtml(item.loanNumber || '')}</td>
+					<td>${escapeHtml(item.unchanged ? 'No change needed' : 'Updated')}</td>
+					<td>${escapeHtml(item.recordedLoanDate || '')}</td>
+					<td>${escapeHtml(item.effectiveLoanDate || '')}</td>
+					<td>${escapeHtml(String(item.scheduleCount || ''))}</td>
+					<td>${escapeHtml(String(item.nextPaymentId || ''))}</td>
+				</tr>
+			`).join('');
+
+			errorBody.innerHTML = errors.map((item) => `
+				<tr>
+					<td>${escapeHtml(item.loanNumber || '')}</td>
+					<td>${escapeHtml(item.error || '')}</td>
+				</tr>
+			`).join('');
+
+			emptyMessage.hidden = results.length > 0 || errors.length > 0;
+		}
+
+		function metricCard(label, value) {
+			return `
+				<div class="metric">
+					<strong>${escapeHtml(String(value))}</strong>
+					<span>${escapeHtml(label)}</span>
+				</div>
+			`;
+		}
+
+		function escapeHtml(value) {
+			return String(value)
+				.replace(/&/g, '&amp;')
+				.replace(/</g, '&lt;')
+				.replace(/>/g, '&gt;')
+				.replace(/"/g, '&quot;')
+				.replace(/'/g, '&#39;');
+		}
+	</script>
+</body>
+</html>

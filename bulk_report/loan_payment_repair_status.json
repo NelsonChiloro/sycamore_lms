@@ -1,0 +1,7 @@
+{
+  "updated_at": "2026-04-24T17:36:05.487Z",
+  "log_file": "/var/www/html/sycamore.finacerealm-mw.com/public_html/bulk_report/repair_loan_schedules_2026-04-24T17-35-21-190Z.log",
+  "status": "failed",
+  "completed_at": "2026-04-24T17:36:05.487Z",
+  "message": "You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'current_user' at line 1"
+}

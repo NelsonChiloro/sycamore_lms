@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nAdd gitignore and include uploads and database backup files\n\nAdded .gitignore to exclude bulk_report/node_modules while tracking uploads folder and database export backup files.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Read(//c/wamp64/www/**)",
+      "Bash(dir:*)",
+      "Bash(php -r:*)",
+      "Bash(openssl md5:*)",
+      "Bash(cat:*)",
+      "Bash(php -l:*)",
+      "Bash(del \"C:\\\\wamp64\\\\www\\\\newsycamore\\\\application\\\\views\\\\activity_logger\\\\export_pdf.php\")",
+      "Bash(more)",
+      "Bash(powershell -Command \"\\(Get-Content ''C:\\\\wamp64\\\\www\\\\newsycamore\\\\admin_assets\\\\css\\\\app.min.css''\\)[5].Substring\\(0, 2000\\)\")",
+      "Bash(powershell -Command:*)",
+      "Bash(Select-String -Pattern \"green|#28a745|#24C16B\" -AllMatches)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
