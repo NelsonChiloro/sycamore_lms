@@ -1,5 +1,5 @@
 <?php
-$employees1 = get_all('employees');
+$employees1 = get_report_loan_officers();
 ?>
 <div class="main-content">
     <div class="page-header">

@@ -64,11 +64,14 @@
                 } elseif ($reportTypeDisplay === 'DAILY_DETAILED_PORTFOLIO') {
                     $reportTypeDisplay = 'DAILY_LOAN_BOOK';
                 }
+                $reportFailed=$reports->status==='failed' || ($reports->report_type==='RISK_RECOVERY_REPORT'
+                    && $reports->status!=='completed' && !empty($reports->completed_time)
+                    && strpos($reports->completed_time,'0000-00-00')!==0);
                 ?>
                 <tr>
 			<td width="80px" style="white-space: nowrap;"><?php echo ++$start ?></td>
                     <td style="word-break: break-word;"><?php echo htmlspecialchars($reportTypeDisplay, ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php   if($reports->status=='completed'){echo "<font color='green'>Complete</font>";}else{ echo "<font color='red'>In Progress</font>";} ?></td>
+                    <td><?php if($reportFailed){echo '<span class="text-danger">Failed — please generate again. If it repeats, check the report-service log.</span>';}elseif($reports->status=='completed'){echo "<font color='green'>Complete</font>";}else{ echo "<font color='red'>In Progress</font>";} ?></td>
                     <td style="min-width: 150px;"><div class="progress">
                             <div class="progress-bar" role="progressbar" style="width: <?php echo $reports->percentage ?>%;" aria-valuenow="<?php echo $reports->percentage ?>" aria-valuemin="0" aria-valuemax="100">
 
@@ -77,7 +80,7 @@
                         <?php echo round($reports->percentage,2) ?>%
                         </td>
                     <td style="white-space: nowrap;"><?php
-                        $previewLink = report_preview_url($reports->download_link);
+                        $previewLink = $reportFailed ? null : report_preview_url($reports->download_link);
                         if ($previewLink) {
                             ?>
                             <a href="<?php echo htmlspecialchars($previewLink); ?>" target="_blank" rel="noopener">Preview</a>

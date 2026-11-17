@@ -5,6 +5,7 @@ if (!defined('BASEPATH'))
 
 class Branches extends CI_Controller
 {
+    private $validation_branch_id=0;
     function __construct()
     {
         parent::__construct();
@@ -14,7 +15,8 @@ class Branches extends CI_Controller
 
     public function index()
     {
-        $q = urldecode($this->input->get('q', TRUE));
+        $query=$this->input->get('q',TRUE);
+        $q=is_scalar($query)?trim((string)$query):'';
         $start = intval($this->input->get('start'));
         
         if ($q <> '') {
@@ -59,7 +61,9 @@ class Branches extends CI_Controller
 		'City' => $row->City,
 		'Stamp' => $row->Stamp,
 	    );
+            $this->load->view('admin/header');
             $this->load->view('branches/branches_read', $data);
+            $this->load->view('admin/footer');
         } else {
             $this->session->set_flashdata('message', 'Record Not Found');
             redirect(site_url('branches'));
@@ -92,16 +96,18 @@ class Branches extends CI_Controller
             $this->create();
         } else {
             $data = array(
-		'BranchCode' => $this->input->post('BranchCode',TRUE),
-		'Code' => rand(100,9999),
-		'BranchName' => $this->input->post('BranchName',TRUE),
-		'AddressLine1' => $this->input->post('AddressLine1',TRUE),
-		'AddressLine2' => $this->input->post('AddressLine2',TRUE),
-		'City' => $this->input->post('City',TRUE),
+		'BranchCode' => trim((string)$this->input->post('BranchCode',TRUE)),
+		'BranchName' => trim((string)$this->input->post('BranchName',TRUE)),
+		'AddressLine1' => trim((string)$this->input->post('AddressLine1',TRUE)),
+		'AddressLine2' => trim((string)$this->input->post('AddressLine2',TRUE)),
+		'City' => trim((string)$this->input->post('City',TRUE)),
 
 	    );
 
-            $this->Branches_model->insert($data);
+            if (!$this->Branches_model->insert($data)) {
+                $this->toaster->error('Branch could not be saved. Please try again.');
+                $this->create();return;
+            }
             $this->toaster->success('Success,branch was created');
             redirect(site_url('branches'));
         }
@@ -134,21 +140,25 @@ class Branches extends CI_Controller
     
     public function update_action() 
     {
+        $this->validation_branch_id=(int)$this->input->post('id',TRUE);
+        if (!$this->Branches_model->get_by_id($this->validation_branch_id)) {show_404();return;}
         $this->_rules();
 
         if ($this->form_validation->run() == FALSE) {
             $this->update($this->input->post('id', TRUE));
         } else {
             $data = array(
-		'BranchCode' => $this->input->post('BranchCode',TRUE),
-		'BranchName' => $this->input->post('BranchName',TRUE),
-		'AddressLine1' => $this->input->post('AddressLine1',TRUE),
-		'AddressLine2' => $this->input->post('AddressLine2',TRUE),
-		'City' => $this->input->post('City',TRUE),
-		'Stamp' => $this->input->post('Stamp',TRUE),
+		'BranchCode' => trim((string)$this->input->post('BranchCode',TRUE)),
+		'BranchName' => trim((string)$this->input->post('BranchName',TRUE)),
+		'AddressLine1' => trim((string)$this->input->post('AddressLine1',TRUE)),
+		'AddressLine2' => trim((string)$this->input->post('AddressLine2',TRUE)),
+		'City' => trim((string)$this->input->post('City',TRUE)),
 	    );
 
-            $this->Branches_model->update($this->input->post('id', TRUE), $data);
+            if (!$this->Branches_model->update((int)$this->input->post('id', TRUE), $data)) {
+                $this->toaster->error('Branch could not be updated. Please try again.');
+                $this->update((int)$this->input->post('id',TRUE));return;
+            }
             $this->session->set_flashdata('message', 'Update Record Success');
             redirect(site_url('branches'));
         }
@@ -170,14 +180,30 @@ class Branches extends CI_Controller
 
     public function _rules() 
     {
-	$this->form_validation->set_rules('BranchCode', 'branchcode', 'trim|required');
-	$this->form_validation->set_rules('BranchName', 'branchname', 'trim|required');
+	$this->form_validation->set_rules('BranchCode', 'branch code', 'trim|required|integer|greater_than_equal_to[0]|less_than_equal_to[2147483647]|callback_unique_branch_code');
+	$this->form_validation->set_rules('BranchName', 'branch name', 'trim|required|max_length[255]|callback_unique_branch_name');
 
-	$this->form_validation->set_rules('City', 'city', 'trim|required');
+	$this->form_validation->set_rules('City', 'city', 'trim|required|max_length[255]');
+    $this->form_validation->set_rules('AddressLine1','address line 1','trim|max_length[200]');
+    $this->form_validation->set_rules('AddressLine2','address line 2','trim|max_length[200]');
 
 
 	$this->form_validation->set_rules('id', 'id', 'trim');
 	$this->form_validation->set_error_delimiters('<span class="text-danger">', '</span>');
+    }
+
+    public function unique_branch_code($value) {
+        if ($this->Branches_model->value_exists('BranchCode',$value,$this->validation_branch_id)) {
+            $this->form_validation->set_message('unique_branch_code','This branch code is already in use.');return false;
+        }
+        return true;
+    }
+
+    public function unique_branch_name($value) {
+        if ($this->Branches_model->value_exists('BranchName',$value,$this->validation_branch_id)) {
+            $this->form_validation->set_message('unique_branch_name','This branch name is already in use.');return false;
+        }
+        return true;
     }
 
 }

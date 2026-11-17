@@ -1,5 +1,5 @@
 <?php
-$users = get_all('employees');
+$users = get_report_loan_officers();
 $branches = get_all('branches');
 $products = get_all('loan_products');
 ?>

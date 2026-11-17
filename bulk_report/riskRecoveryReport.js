@@ -1,8 +1,48 @@
 const moment = require('moment');
+const fs = require('fs');
+const path = require('path');
+
+// Embed the export runtime in saved previews. Apache/static-route permissions
+// and later file moves must not prevent an already-generated report exporting.
+function excelRuntime(readFile = fs.readFileSync) {
+    let library = '';
+    let handler = '';
+    try { library = readFile(path.join(__dirname, 'public/vendor/xlsx.full.min.js'), 'utf8'); }
+    catch (error) { console.warn('Risk Recovery: local Excel library unavailable; using browser fallback:', error.code || error.message); }
+    try { handler = readFile(path.join(__dirname, 'public/reportExcelExport.js'), 'utf8'); }
+    catch (error) { console.warn('Risk Recovery: export handler unavailable; using embedded fallback:', error.code || error.message); }
+    if (!handler) handler = `window.downloadReportExcel = function(id, filename, name) {
+        var data=JSON.parse(document.getElementById(id).textContent), book=XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(book,XLSX.utils.aoa_to_sheet([data.headers].concat(data.rows)),name);
+        if(data.summary) XLSX.utils.book_append_sheet(book,XLSX.utils.aoa_to_sheet(data.summary),'Summary');
+        XLSX.writeFile(book,filename,{bookType:'xlsx'});
+    };`;
+    const fallback = library ? '' : `
+    (function(){
+        var original=window.downloadReportExcel, loading;
+        window.downloadReportExcel=async function(){
+            var args=arguments;
+            try {
+                if(!window.XLSX){
+                    if(!loading) loading=new Promise(function(resolve,reject){
+                        var script=document.createElement('script');
+                        script.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+                        script.onload=function(){window.XLSX?resolve():reject(new Error('Excel library unavailable'));};
+                        script.onerror=function(){reject(new Error('Excel library could not load'));};
+                        document.head.appendChild(script);
+                    });
+                    await loading;
+                }
+                return original.apply(window,args);
+            } catch(error){ loading=null; window.alert('Excel export could not load. Please check the report export files or network connection.'); }
+        };
+    }());`;
+    return [library, handler, fallback].join('\n;\n').replace(/<\/script/gi, '<\\/script');
+}
 
 function dbQuery(db, sql, params = []) {
     return new Promise((resolve, reject) => {
-        db.query(sql, params, (error, rows) => error ? reject(error) : resolve(rows));
+        db.query({sql, timeout: 120000}, params, (error, rows) => error ? reject(error) : resolve(rows));
     });
 }
 
@@ -171,6 +211,21 @@ async function generateRiskRecoveryReport(filters, reportId, reportTrackers, db)
             filters.writeoff === '0' ? 'Not recommended for write-off' : 'All write-off statuses',
     ];
 
+    const excelData = JSON.stringify({
+        headers: ['#', 'Loan #', 'Client Name', 'Product', 'Branch', 'Status', 'RBM Classification', 'Risk Officer',
+            'Loan Balance', 'Principal Balance', 'Interest Charges', 'Last Payment', 'Amount Paid', 'Days in Arrears', 'Collateral Value', 'Write-off Rec.'],
+        rows: loans.map((loan, index) => [index + 1, String(loan.loan_number || ''), loan.customer_name || '', loan.product_name || '',
+            loan.branch_name || '', loan.loan_status || '', classification(loan.days_in_arrears), loan.risk_officer || 'Not assigned',
+            Number(loan.principal_balance || 0) + Number(loan.interest_balance || 0), Number(loan.principal_balance || 0),
+            Number(loan.interest_balance || 0), loan.last_payment_date ? moment(loan.last_payment_date).format('YYYY-MM-DD') : '',
+            Number(loan.amount_paid || 0), Number(loan.days_in_arrears || 0), Number(loan.collateral_total_value || 0),
+            Number(loan.write_off_recommendation || 0) === 1 ? 'Yes' : 'No']),
+        numberColumns: [8, 9, 10, 12, 14],
+        summary: [['Risk Recovery Report'], ['Generated', moment().format('YYYY-MM-DD HH:mm:ss')],
+            ['Filters', filterLabels.join(' | ')], ['Total Loans', loans.length], ['Total Principal', totals.principal],
+            ['Total Interest', totals.interest], ['Write-off Recommendations', totals.writeoffs]]
+    }).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+
     reportTrackers[reportId].percentage = 95;
     return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Risk Recovery Report</title>
@@ -185,7 +240,8 @@ th,td{border:1px solid #ddd;padding:7px;vertical-align:top}th{background:#153505
 .risk-substandard{background:#e8f5e9}.risk-special-mention{background:#fffde7}
 @media print{.toolbar{display:none}th{position:static}body{margin:5px}}
 </style></head><body>
-<div class="toolbar"><button onclick="window.print()">Print / Save PDF</button></div>
+<div class="toolbar"><button onclick="window.print()">Print / Save PDF</button>
+<button onclick="downloadReportExcel('risk-recovery-excel-data','Risk_Recovery_Report.xlsx','Risk Recovery')">Export Excel</button></div>
 <h1>Risk Recovery Report</h1>
 <div class="meta">Generated: ${escapeHtml(moment().format('YYYY-MM-DD HH:mm:ss'))}<br>${escapeHtml(filterLabels.join(' | '))}</div>
 <div class="summary">
@@ -199,7 +255,9 @@ th,td{border:1px solid #ddd;padding:7px;vertical-align:top}th{background:#153505
 <th>Interest Charges</th><th>Last Payment</th><th>Amount Paid</th><th>Days in Arrears</th>
 <th>Collateral Value</th><th>Write-off Rec.</th></tr></thead>
 <tbody>${rows || '<tr><td colspan="16" style="text-align:center">No loans matched the selected filters.</td></tr>'}</tbody></table>
+<script type="application/json" id="risk-recovery-excel-data">${excelData}</script>
+<script>${excelRuntime()}</script>
 </body></html>`;
 }
 
-module.exports = { generateRiskRecoveryReport };
+module.exports = { generateRiskRecoveryReport, excelRuntime };

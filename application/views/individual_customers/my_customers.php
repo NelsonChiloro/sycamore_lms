@@ -1,5 +1,6 @@
 
-<div class="main-content">
+<?php $this->load->view('individual_customers/_list_layout'); ?>
+<div class="main-content customer-list-page">
 	<div class="page-header">
 		<h2 class="header-title">Individual customers</h2>
 		<div class="header-sub-title">
@@ -13,7 +14,7 @@
 	<div class="card">
 		<div class="card-body" style="border: thick #24C16B solid;border-radius: 14px;">
 
-        <table id="data-table" class="table">
+        <div class="customer-table-scroll"><table id="data-table" class="table">
             <thead>
 			<tr>
 
@@ -55,7 +56,7 @@
 
 				}else{
 				?>
-				<a href="<?php echo base_url('individual_customers/delete/'.$individual_customers->id)?>" onclick="return confirm('Are you sure you want to delete this?')" class="btn btn-danger"><i class="os-icon os-icon-trash"></i>Delete</a>
+                <?php $this->load->view('individual_customers/_delete_button',array('customer_delete_id'=>$individual_customers->id)); ?>
 				<?php
 
 				}
@@ -66,7 +67,7 @@
             }
             ?>
 			</tbody>
-        </table>
+        </table></div>
 		</div>
 	</div>
 </div>

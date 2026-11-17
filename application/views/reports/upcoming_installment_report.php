@@ -1,7 +1,7 @@
 <?php defined('BASEPATH') OR exit('No direct script access allowed'); ?>
 <?php
 // Get data for dropdowns
-$users = get_all('employees');
+$users = get_report_loan_officers();
 $products = get_all('loan_products');
 $branches = get_all('branches');
 ?>

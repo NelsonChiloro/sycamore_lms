@@ -2,3 +2,15 @@ financerealm_sycamore_demo.sql
 bulk_report/reports.zip 
 *.sql 
 *.zip 
+
+# Local database/test state and generated deployment bundles
+/.local/
+/database-backups/
+/releases/
+node_modules/
+
+# Version the application migrations, not database dumps
+!/database/20261022_bulk_history_dates.sql
+!/database/20261022_historical_penalties.sql
+!/database/20261022_late_charge_framework.sql
+!/database/20261109_customer_soft_delete.sql

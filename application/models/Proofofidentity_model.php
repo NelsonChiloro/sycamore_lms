@@ -47,6 +47,7 @@ class Proofofidentity_model extends CI_Model
         }
 
         $this->db->from($this->table);
+        $this->db->where("NOT EXISTS (SELECT 1 FROM individual_customers deleted_customer WHERE deleted_customer.ClientId = proofofidentity.ClientId AND deleted_customer.approval_status = 'Deleted')",null,false);
         $this->db->where(
             "UPPER(REPLACE(REPLACE(REPLACE(TRIM(IDNumber), ' ', ''), '-', ''), '/', '')) = " . $this->db->escape($normalized),
             null,

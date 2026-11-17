@@ -1,3 +1,4 @@
+<?php $payments = Payement_schedules_model::with_contract_balances($payments); ?>
 <?php
 $next_payment_details = $this->Payement_schedules_model->get_next($next_payment_id,$loan_id);
 $can_accept_payment = in_array(strtoupper(trim((string) $loan_status)), array('ACTIVE', 'WRITTEN_OFF'), true);
@@ -153,7 +154,7 @@ $can_accept_payment = in_array(strtoupper(trim((string) $loan_status)), array('A
                             <th>Loan cover</th>
                             <th>Pay Amount</th>
                             <th>Amount Paid</th>
-                            <th>Loan Balance</th>
+                            <th>Remaining Balance</th>
                             <th>Status</th>
                             <th>Action</th>
                         </tr>
@@ -187,7 +188,7 @@ $can_accept_payment = in_array(strtoupper(trim((string) $loan_status)), array('A
                                 <td <?php echo $css; ?>>MK<?php  echo number_format($p->ploan_cover,2) ?></td>
                                 <td <?php echo $css; ?>>MK<?php  echo number_format($p->amount,2) ?></td>
                                 <td <?php echo $css; ?>>MK<?php  echo number_format($p->paid_amount,2)?></td>
-                                <td <?php echo $css; ?>>MK<?php  echo number_format($p->loan_balance,2)?></td>
+                                <td <?php echo $css; ?>>MK<?php  echo number_format($p->contract_balance,2)?></td>
                                 <td width="150" <?php echo $css; ?>><span style="color:<?php echo $p->status=='PAID' ? 'GREEN' : 'RED'?>"><?php echo $p->status.$xstatus; if($p->partial_paid=="YES"){echo "-<font color='green'>(Partial paid)</font>";}?></span></td>
                                 <td <?php echo $css; ?> width="70"></td>
                             </tr>
@@ -426,7 +427,7 @@ $can_accept_payment = in_array(strtoupper(trim((string) $loan_status)), array('A
                             <th>Check Date</th>
                             <th>Amount</th>
                             <th>Amount Paid</th>
-                            <th>Loan Balance</th>
+                            <th>Remaining Balance</th>
                             <th>Status</th>
                             <th>Action</th>
                         </tr>
@@ -455,7 +456,7 @@ $can_accept_payment = in_array(strtoupper(trim((string) $loan_status)), array('A
                                 <td <?php echo $css; ?>><?php  echo $p->payment_schedule?></td>
                                 <td <?php echo $css; ?>>MK<?php  echo number_format($p->amount,2) ?></td>
                                 <td <?php echo $css; ?>>MK<?php  echo number_format($p->paid_amount,2)?></td>
-                                <td <?php echo $css; ?>>MK<?php  echo number_format($p->loan_balance,2)?></td>
+                                <td <?php echo $css; ?>>MK<?php  echo number_format($p->contract_balance,2)?></td>
                                 <td width="150" <?php echo $css; ?>><span style="color:<?php echo $p->status=='PAID' ? 'GREEN' : 'RED'?>"><?php echo $p->status.$xstatus; if($p->partial_paid=="YES"){echo "-<font color='green'>(Partial paid)</font>";}?></span></td>
                                 <td <?php echo $css; ?> width="70"><?php if($p->status == 'NOT PAID') { ?>  <input type="checkbox" name="payment_number[]" value="<?php echo $p->payment_number  ?>" class="check-cls"><?php  } ?></td>
                             </tr>

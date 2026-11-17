@@ -63,6 +63,12 @@ function get_all($id){
 
 
 }
+
+function get_report_loan_officers() {
+    $ci=ensure_db_loaded();
+    $ci->load->model('Employees_model');
+    return $ci->Employees_model->get_report_loan_officers();
+}
 function get_loan_cycle($loan_id, $customer_id, $customer_type) {
     // Get CI instance
     $CI =& get_instance();

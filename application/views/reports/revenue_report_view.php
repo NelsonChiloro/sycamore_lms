@@ -90,6 +90,7 @@
             </div>
 
             <div class="export-buttons text-right">
+                <a class="btn btn-success" href="<?php echo htmlspecialchars(site_url('revenue_report/export_excel').'?'.http_build_query(array('start_date'=>$start_date,'end_date'=>$end_date,'officer_id'=>$officer_id,'branch_id'=>$branch_id,'supervisor'=>$supervisor_id??null)),ENT_QUOTES,'UTF-8'); ?>">Export Excel</a>
 
                 <a href="<?php echo site_url('revenue_report'); ?>" class="btn btn-secondary">
                     <i class="fa fa-filter"></i> Change Filters

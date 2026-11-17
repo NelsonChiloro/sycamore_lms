@@ -5,35 +5,38 @@
 			<nav class="breadcrumb breadcrumb-dash">
 				<a href="<?php echo base_url('Admin')?>" class="breadcrumb-item"><i class="anticon anticon-home m-r-5"></i>Home</a>
 				<a class="breadcrumb-item" href="#">-</a>
-				<span class="breadcrumb-item active">Branche form</span>
+				<span class="breadcrumb-item active">Branch form</span>
 			</nav>
 		</div>
 	</div>
 	<div class="card">
 		<div class="card-body" style="border: thick orange solid;border-radius: 14px;">
         <form action="<?php echo $action; ?>" method="post" class="form-row">
+        <?php if($this->config->item('csrf_protection')): ?>
+        <input type="hidden" name="<?php echo htmlspecialchars($this->security->get_csrf_token_name(),ENT_QUOTES,'UTF-8'); ?>" value="<?php echo htmlspecialchars($this->security->get_csrf_hash(),ENT_QUOTES,'UTF-8'); ?>">
+        <?php endif; ?>
 	    <div class="form-group col-6">
             <label for="int">BranchCode <?php echo form_error('BranchCode') ?></label>
-            <input type="text" class="form-control" name="BranchCode" id="BranchCode" placeholder="BranchCode" value="<?php echo $BranchCode; ?>" />
+            <input type="text" class="form-control" name="BranchCode" id="BranchCode" placeholder="BranchCode" value="<?php echo htmlspecialchars((string)($BranchCode??''),ENT_QUOTES,'UTF-8'); ?>" />
         </div>
 	    <div class="form-group col-6">
             <label for="varchar">BranchName <?php echo form_error('BranchName') ?></label>
-            <input type="text" class="form-control" name="BranchName" id="BranchName" placeholder="BranchName" value="<?php echo $BranchName; ?>" />
+            <input type="text" class="form-control" name="BranchName" id="BranchName" placeholder="BranchName" value="<?php echo htmlspecialchars((string)($BranchName??''),ENT_QUOTES,'UTF-8'); ?>" />
         </div>
 	    <div class="form-group col-6">
             <label for="varchar">AddressLine1 <?php echo form_error('AddressLine1') ?></label>
-            <input type="text" class="form-control" name="AddressLine1" id="AddressLine1" placeholder="AddressLine1" value="<?php echo $AddressLine1; ?>" />
+            <input type="text" class="form-control" name="AddressLine1" id="AddressLine1" placeholder="AddressLine1" value="<?php echo htmlspecialchars((string)($AddressLine1??''),ENT_QUOTES,'UTF-8'); ?>" />
         </div>
 	    <div class="form-group col-6">
             <label for="varchar">AddressLine2 <?php echo form_error('AddressLine2') ?></label>
-            <input type="text" class="form-control" name="AddressLine2" id="AddressLine2" placeholder="AddressLine2" value="<?php echo $AddressLine2; ?>" />
+            <input type="text" class="form-control" name="AddressLine2" id="AddressLine2" placeholder="AddressLine2" value="<?php echo htmlspecialchars((string)($AddressLine2??''),ENT_QUOTES,'UTF-8'); ?>" />
         </div>
 	    <div class="form-group col-12">
             <label for="varchar">City <?php echo form_error('City') ?></label>
-            <input type="text" class="form-control" name="City" id="City" placeholder="City" value="<?php echo $City; ?>" />
+            <input type="text" class="form-control" name="City" id="City" placeholder="City" value="<?php echo htmlspecialchars((string)($City??''),ENT_QUOTES,'UTF-8'); ?>" />
         </div>
 
-	    <input type="hidden" name="id" value="<?php echo $id; ?>" /> 
+	    <input type="hidden" name="id" value="<?php echo htmlspecialchars((string)($id??''),ENT_QUOTES,'UTF-8'); ?>" />
 	    <button type="submit" class="btn btn-primary"><?php echo $button ?></button> 
 	    <a href="<?php echo site_url('branches') ?>" class="btn btn-default">Cancel</a>
 	</form>

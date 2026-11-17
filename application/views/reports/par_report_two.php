@@ -1,4 +1,4 @@
-<?php $users = get_all('employees'); $products = get_all('loan_products'); $branches = get_all('branches'); ?>
+<?php $users = get_report_loan_officers(); $products = get_all('loan_products'); $branches = get_all('branches'); ?>
 <div class="main-content">
     <div class="page-header">
         <h2 class="header-title">PAR Report</h2>

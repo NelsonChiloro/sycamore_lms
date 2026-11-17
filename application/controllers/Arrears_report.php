@@ -16,7 +16,7 @@ class Arrears_report extends CI_Controller {
 
     public function index() {
         // Get all loan officers for the filter dropdown
-        $data['officers'] = $this->Employees_model->get_all();
+        $data['officers'] = $this->Employees_model->get_report_loan_officers();
 
         // Set default date range (last 30 days)
         $data['start_date'] = date('Y-m-d', strtotime('-30 days'));

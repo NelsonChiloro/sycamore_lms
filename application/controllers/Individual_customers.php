@@ -128,7 +128,7 @@ function send_s(){
     }
     public function index1()
     {
-        $q = urldecode($this->input->get('q', TRUE));
+        $q = (string)($this->input->get('q', TRUE) ?? '');
         $start = intval($this->input->get('start'));
 
         if ($q <> '') {
@@ -161,7 +161,7 @@ function send_s(){
     }
 	public function edit()
     {
-        $q = urldecode($this->input->get('q', TRUE));
+        $q = (string)($this->input->get('q', TRUE) ?? '');
         $start = intval($this->input->get('start'));
 
         if ($q <> '') {
@@ -194,7 +194,7 @@ function send_s(){
     }
     public function to_delete()
     {
-        $q = urldecode($this->input->get('q', TRUE));
+        $q = (string)($this->input->get('q', TRUE) ?? '');
         $start = intval($this->input->get('start'));
 
         if ($q <> '') {
@@ -227,7 +227,7 @@ function send_s(){
     }
     public function kyc_edit()
     {
-        $q = urldecode($this->input->get('q', TRUE));
+        $q = (string)($this->input->get('q', TRUE) ?? '');
         $start = intval($this->input->get('start'));
 
         if ($q <> '') {
@@ -601,6 +601,11 @@ function send_s(){
     
     public function create_action() 
     {
+        $identity_number=trim((string)$this->input->post('IDNumber',true));
+        if ($identity_number!=='' && $this->Proofofidentity_model->id_number_exists($identity_number)) {
+            $this->toaster->error('This ID number is already registered to another customer.');
+            $this->create();return;
+        }
     	$dd = $this->Individual_customers_model->count_it();
     	$d1 = $this->Corporate_customers_model->count_it();
         $this->_rules();
@@ -864,7 +869,28 @@ function send_s(){
         }
     }
     
-    public function delete($id) 
+    public function delete($id)
+    {
+        if (!$this->session->userdata('user_id')) {show_error('Sign in to delete a customer.',403);return;}
+        if ($this->input->method(true)!=='POST') {show_error('Customer deletion requires POST.',405);return;}
+        $row=$this->Individual_customers_model->get_by_id((int)$id);
+        if (!$row) {show_404();return;}
+        if ($this->Individual_customers_model->has_loan_record((int)$id)) {
+            $this->toaster->error('This customer cannot be deleted because they have a loan record.');
+            redirect('Individual_customers');return;
+        }
+        if ($row->approval_status!=='Deleted') {
+            if (!$this->Individual_customers_model->delete((int)$id)) {
+                $this->toaster->error('Customer could not be deleted. Check the soft-delete database migration.');
+            } else {
+                log_activity(array('user_id'=>$this->session->userdata('user_id'),'activity'=>'Soft deleted customer '.$row->ClientId.' (record '.$row->id.')'));
+                $this->toaster->success('Customer deleted. Historical records have been retained.');
+            }
+        }
+        redirect('Individual_customers');
+    }
+
+    public function archive($id)
     {
         $row = $this->Individual_customers_model->get_by_id($id);
 

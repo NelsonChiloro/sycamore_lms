@@ -116,7 +116,7 @@ function report_load_relationship_supervisors()
 {
     $ci =& get_instance();
     $ci->load->model('Employees_model');
-    return $ci->Employees_model->get_relationship_supervisors();
+    return $ci->Employees_model->get_report_supervisors();
 }
 
 /**

@@ -319,14 +319,16 @@ const rbmReport1 = async () => {
     const results = await query(sql);
     return results;
 };
-const rbmReport = async () => {
+const rbmReport = async (filters = {}) => {
+    const { where, params } = require('./crbFilters').buildCrbFilters(filters);
     const sql = `
         SELECT * FROM individual_customers 
             INNER JOIN proofofidentity ON proofofidentity.ClientID = individual_customers.ClientID 
             INNER JOIN loan ON loan.loan_customer = individual_customers.id 
+            WHERE ${where}
             ORDER BY loan.loan_id DESC
     `;
-    const results = await query(sql);
+    const results = await query(sql, params);
     return results;
 };
 // Function to get all records by table name, key, and value

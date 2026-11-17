@@ -48,6 +48,29 @@ class Employees_model extends CI_Model
         return strpos($name, 'BRANCH') !== false && strpos($name, 'MANAGER') !== false;
     }
 
+    public static function role_is_report_loan_officer($role_name)
+    {
+        $name=self::normalize_role_name($role_name);
+        return !self::role_is_branch_manager($name) && (self::role_is_relationship_officer($name)
+            || (strpos($name,'LOAN')!==false && strpos($name,'OFFICER')!==false && strpos($name,'SUPERVISOR')===false));
+    }
+
+    /** Report filters use employee IDs, never the joined role's ID. */
+    public function get_report_loan_officers()
+    {
+        return $this->get_officers_by_role_predicate(array(__CLASS__,'role_is_report_loan_officer'));
+    }
+
+    public static function role_is_report_supervisor($role_name)
+    {
+        return self::role_is_relationship_supervisor($role_name) || self::role_is_branch_manager($role_name);
+    }
+
+    public function get_report_supervisors()
+    {
+        return $this->get_employees_by_role_predicate(array(__CLASS__,'role_is_report_supervisor'));
+    }
+
     public static function role_is_risk_officer($role_name)
     {
         $name = self::normalize_role_name($role_name);

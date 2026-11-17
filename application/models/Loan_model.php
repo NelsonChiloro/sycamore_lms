@@ -5176,6 +5176,25 @@ class Loan_model extends CI_Model
 			return $table;
 
 	}
+    /** Split the stored contract into actual principal, interest and financed fees. */
+    public function straight_schedule_components($principal,$contract_total,$interest_total,$terms) {
+        $terms=(int)$terms;
+        $principal_cents=(int)round($principal*100);
+        $interest_cents=(int)round($interest_total*100);
+        $fee_cents=(int)round($contract_total*100)-$principal_cents-$interest_cents;
+        if ($terms<=0 || $principal_cents<0 || $interest_cents<0 || $fee_cents<0) throw new RuntimeException('Invalid straight-line contract totals.');
+        $result=array();$balance=$principal_cents;
+        for($n=1;$n<=$terms;$n++) {
+            $p=(int)floor($principal_cents*$n/$terms)-(int)floor($principal_cents*($n-1)/$terms);
+            $i=(int)floor($interest_cents*$n/$terms)-(int)floor($interest_cents*($n-1)/$terms);
+            $f=(int)floor($fee_cents*$n/$terms)-(int)floor($fee_cents*($n-1)/$terms);
+            $balance-=$p;
+            $result[$n]=array('principal'=>$p/100,'interest'=>$i/100,'padmin_fee'=>$f/100,
+                'amount'=>($p+$i+$f)/100,'loan_balance'=>$balance/100);
+        }
+        return $result;
+    }
+
     function add_amortization_straight_weekly_edit($lidd,$principal,$loan_amount, $product_id, $loan_term, $start_date,$loan_customer, $customer_type, $worthness_file,$narration,$added_by, $frequency = 'Weekly') {
         $this->db->select('MAX(counter) as max_c');
         $lid = $this->db->get('loan');
@@ -5246,6 +5265,7 @@ class Loan_model extends CI_Model
 
         //$monthly_payment = $amount*($i/12)*pow((1+$i/12),$months)/(pow((1+$i/12),$months)-1);
 
+        $schedule_components = $this->straight_schedule_components($principal, $loan_amount+$total_interest_amount+$payment_amount_processing_fee, $total_interest_amount, $num_payments);
         $data = array(
 
             'loan_product' => $product_id,
@@ -5261,10 +5281,10 @@ class Loan_model extends CI_Model
             'loan_interest' => $loan->interest,
             'loan_interest_amount' => $total_interest_amount,
             'admin_fee' => $loan->admin_fees,
-            'admin_fees_amount' => 0,
+            'admin_fees_amount' => round($loan_amount+$payment_amount_processing_fee-$principal,2),
             'loan_cover' => $loan->loan_cover,
             'loan_cover_amount' => 0,
-            'loan_amount_total' => $loan_amount+$total_interest_amount+$payment_amount_processing_fee,
+            'loan_amount_total' => round($loan_amount+$total_interest_amount+$payment_amount_processing_fee,2),
             'loan_added_by' => $added_by,
             'counter' => $fcounter
         );
@@ -5290,19 +5310,16 @@ class Loan_model extends CI_Model
             }
 
             // Calculate installment split using opening balance for this period.
-            $opening_balance = $loan_amount - (($i - 1) * $payment_amount);
-            $interest_payment = $opening_balance * $weekly_interest_rate;
-            $principal_payment = $payment_amount - $interest_payment;
-            $loan_balance = $opening_balance - $principal_payment;
-            if ($loan_balance < 0) {
-                $loan_balance = 0;
-            }
+            $interest_payment = $schedule_components[$i]['interest'];
+            $principal_payment = $schedule_components[$i]['principal'];
+            $loan_balance = $schedule_components[$i]['loan_balance'];
+            $installment_amount = $schedule_components[$i]['amount'];
 
             // Add the payment details to the amortization schedule array
             $amortization_schedule[] = array(
                 'payment_number' => $i,
                 'payment_date' => $schedule_date,
-                'payment_amount' => $payment_amount+$weekly_addend,
+                'payment_amount' => $installment_amount,
                 'interest_amount' => $interest_payment,
                 'principal_amount' => $principal_payment,
                 'loan_balance' => $loan_balance,
@@ -5312,7 +5329,7 @@ class Loan_model extends CI_Model
             if ($carried_paid_amount <= 0) {
                 $schedule_status = 'NOT PAID';
                 $schedule_partial_paid = 'NO';
-            } elseif ($carried_paid_amount + 0.0001 >= $payment_amount) {
+            } elseif ($carried_paid_amount + 0.0001 >= $installment_amount) {
                 $schedule_status = 'PAID';
                 $schedule_partial_paid = 'NO';
             } else {
@@ -5328,10 +5345,10 @@ class Loan_model extends CI_Model
                     'loan_id' => $id,
                     'payment_schedule' => $schedule_date,
                     'payment_number' => $i,
-                    'amount' => $payment_amount,
+                    'amount' => $installment_amount,
                     'principal' => $principal_payment,
                     'interest' => $interest_payment,
-                    'padmin_fee' => 0,
+                    'padmin_fee' => $schedule_components[$i]['padmin_fee'],
                     'ploan_cover' => 0,
                     'paid_amount' => $carried_paid_amount,
                     'loan_balance' => $loan_balance,
@@ -5546,7 +5563,8 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
 
 		//$monthly_payment = $amount*($i/12)*pow((1+$i/12),$months)/(pow((1+$i/12),$months)-1);
 
-		$data = array(
+		$schedule_components = $this->straight_schedule_components($principal, $loan_amount+$total_interest_amount+$payment_amount_processing_fee, $total_interest_amount, $num_payments);
+        $data = array(
 			'loan_number' => $loanid,
 			'loan_product' => $product_id,
 			'loan_customer' => $loan_customer,
@@ -5561,10 +5579,10 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
 			'loan_interest' => $loan->interest,
 			'loan_interest_amount' => $total_interest_amount,
 			'admin_fee' => $loan->admin_fees,
-			'admin_fees_amount' => 0,
+			'admin_fees_amount' => round($loan_amount+$payment_amount_processing_fee-$principal,2),
 			'loan_cover' => $loan->loan_cover,
 			'loan_cover_amount' => 0,
-			'loan_amount_total' => $loan_amount+$total_interest_amount+$payment_amount_processing_fee,
+			'loan_amount_total' => round($loan_amount+$total_interest_amount+$payment_amount_processing_fee,2),
 			'next_payment_id' => 1,
 			'loan_added_by' => $added_by,
 			'counter' => $fcounter,
@@ -5591,17 +5609,16 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
 			}
 
 			// Calculate the remaining loan balance
-			$loan_balance = $loan_amount - ($i * $payment_amount);
-
-			// Calculate the interest and principal amounts for this payment
-			$interest_payment = ($i == 1) ? $interest_amount : $interest_amount + ($loan_balance * $weekly_interest_rate);
-			$principal_payment = $payment_amount - $interest_payment;
+			$loan_balance = $schedule_components[$i]['loan_balance'];
+            $interest_payment = $schedule_components[$i]['interest'];
+            $principal_payment = $schedule_components[$i]['principal'];
+            $installment_amount = $schedule_components[$i]['amount'];
 
 			// Add the payment details to the amortization schedule array
 			$amortization_schedule[] = array(
 				'payment_number' => $i,
 				'payment_date' => $payment_date->format('Y-m-d'),
-				'payment_amount' => $payment_amount+$weekly_addend,
+				'payment_amount' => $installment_amount,
 				'interest_amount' => $interest_payment,
 				'principal_amount' => $principal_payment,
 				'loan_balance' => $loan_balance,
@@ -5615,10 +5632,10 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
 					'loan_id' => $id,
 					'payment_schedule' => $payment_date->format('Y-m-d'),
 					'payment_number' => $i,
-					'amount' => $payment_amount,
+					'amount' => $installment_amount,
 					'principal' => $principal_payment,
 					'interest' => $interest_payment,
-					'padmin_fee' => 0,
+					'padmin_fee' => $schedule_components[$i]['padmin_fee'],
 					'ploan_cover' => 0,
 					'paid_amount' => 0,
 					'loan_balance' => $loan_balance,
@@ -6111,6 +6128,7 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
 
         //$monthly_payment = $amount*($i/12)*pow((1+$i/12),$months)/(pow((1+$i/12),$months)-1);
 
+        $schedule_components = $this->straight_schedule_components($principal, $loan_amount+$total_interest_amount+$payment_amount_processing_fee, $total_interest_amount, $num_payments);
         $data = array(
             'loan_number' => $loanid,
             'loan_product' => $product_id,
@@ -6125,10 +6143,10 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
             'loan_interest' => $loan->interest,
             'loan_interest_amount' => $total_interest_amount,
             'admin_fee' => $loan->admin_fees,
-            'admin_fees_amount' => 0,
+            'admin_fees_amount' => round($loan_amount+$payment_amount_processing_fee-$principal,2),
             'loan_cover' => $loan->loan_cover,
             'loan_cover_amount' => 0,
-            'loan_amount_total' => $loan_amount+$total_interest_amount+$payment_amount_processing_fee,
+            'loan_amount_total' => round($loan_amount+$total_interest_amount+$payment_amount_processing_fee,2),
             'next_payment_id' => 1,
 
             'counter' => $fcounter
@@ -6147,19 +6165,16 @@ function add_amortization_biweekly($principal, $loan_amount, $product_id, $loan_
             }
 
             // Calculate installment split using opening balance for this period.
-            $opening_balance = $loan_amount - (($i - 1) * $payment_amount);
-            $interest_payment = $opening_balance * $weekly_interest_rate;
-            $principal_payment = $payment_amount - $interest_payment;
-            $loan_balance = $opening_balance - $principal_payment;
-            if ($loan_balance < 0) {
-                $loan_balance = 0;
-            }
+            $interest_payment = $schedule_components[$i]['interest'];
+            $principal_payment = $schedule_components[$i]['principal'];
+            $loan_balance = $schedule_components[$i]['loan_balance'];
+            $installment_amount = $schedule_components[$i]['amount'];
 
             // Add the payment details to the amortization schedule array
             $amortization_schedule[] = array(
                 'payment_number' => $i,
                 'payment_date' => $schedule_date,
-                'payment_amount' => $payment_amount+$weekly_addend,
+                'payment_amount' => $installment_amount,
                 'interest_amount' => $interest_payment,
                 'principal_amount' => $principal_payment,
                 'loan_balance' => $loan_balance,
@@ -6174,10 +6189,10 @@ $this->db->where('payment_number',$i);
                     'payment_schedule' => $schedule_date,
 
                     'payment_number' => $i,
-                    'amount' => $payment_amount,
+                    'amount' => $installment_amount,
                     'principal' => $principal_payment,
                     'interest' => $interest_payment,
-                    'padmin_fee' => 0,
+                    'padmin_fee' => $schedule_components[$i]['padmin_fee'],
                     'ploan_cover' => 0,
                     'paid_amount' => 0,
                     'loan_balance' => $loan_balance,

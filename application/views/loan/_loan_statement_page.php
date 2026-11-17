@@ -1,10 +1,21 @@
+<?php $payments = Payement_schedules_model::with_contract_balances($payments); ?>
 <?php
 if (!isset($settings)) {
     $settings = get_by_id('settings', 'settings_id', '1');
 }
 $statement_title = !empty($statement_title) ? $statement_title : 'Loan Summary Report';
 $batch_label = !empty($batch_label) ? $batch_label : '';
+$statement_contract_due=0;$statement_penalties=0;$statement_paid=0;
+foreach($payments as $schedule) {
+    $statement_contract_due+=max(0,(float)$schedule->amount-(float)$schedule->paid_amount);
+    $statement_penalties+=max(0,(float)($schedule->total_late_charge??0));
+    $statement_paid+=(float)$schedule->paid_amount;
+}
 ?>
+<style>
+table.loan-schedule-report { table-layout: fixed; width: 100%; }
+table.loan-schedule-report th, table.loan-schedule-report td { font-size: 9px !important; padding: 4px 2px !important; overflow-wrap: anywhere; }
+</style>
 <div class="section">
     <div class="content">
         <h1 style="text-align: center;"><?php echo htmlspecialchars($settings->company_name); ?></h1>
@@ -39,6 +50,10 @@ $batch_label = !empty($batch_label) ? $batch_label : '';
                         <tr><td width="40%">Borrower Name:</td><td><strong><?php echo htmlspecialchars($loan_customer); ?></strong></td></tr>
                         <tr><td>Principal Amount:</td><td><strong><?php echo $settings->currency ?><?php echo number_format($loan_principal, 2); ?></strong></td></tr>
                         <tr><td>Principal + Interest and Charges:</td><td><strong><?php echo $settings->currency ?><?php echo number_format($loan_amount_total, 2); ?></strong></td></tr>
+                        <tr><td>Contract Payments:</td><td><strong><?php echo $settings->currency ?><?php echo number_format($statement_paid,2); ?></strong></td></tr>
+                        <tr><td>Remaining Contract Balance:</td><td><strong><?php echo $settings->currency ?><?php echo number_format($statement_contract_due,2); ?></strong></td></tr>
+                        <tr><td>Late Charges Outstanding:</td><td><strong><?php echo $settings->currency ?><?php echo number_format($statement_penalties,2); ?></strong></td></tr>
+                        <tr><td>Total Outstanding:</td><td><strong><?php echo $settings->currency ?><?php echo number_format($statement_contract_due+$statement_penalties,2); ?></strong></td></tr>
                         <tr><td>Loan product:</td><td><strong><?php echo htmlspecialchars($product_name); ?></strong></td></tr>
                         <tr><td>Branch:</td><td><strong><?php echo htmlspecialchars($branch_name); ?></strong></td></tr>
                         <tr><td>Interest rate:</td><td><strong><?php echo $loan_interest; ?>%</strong></td></tr>
@@ -67,27 +82,28 @@ $batch_label = !empty($batch_label) ? $batch_label : '';
     <div class="title">Summary</div>
     <br>
     <div class="content">
-        <table class="collapse" id="pattern-style-a">
+        <table class="collapse loan-schedule-report" id="pattern-style-a">
             <thead>
             <tr>
                 <th>Pay #</th>
                 <th>Date Due</th>
                 <th><?php echo ($period_type == '2 Weeks') ? 'Principal + Other Charges' : 'Principal'; ?>(<?php echo $settings->currency ?>)</th>
                 <th>Interest + Charges(<?php echo $settings->currency ?>)</th>
+                <th>Late Charges(<?php echo $settings->currency ?>)</th>
                 <th>Amount Due(<?php echo $settings->currency ?>)</th>
                 <th>Amount Paid(<?php echo $settings->currency ?>)</th>
-                <th>Theoretical Bal*(<?php echo $settings->currency ?>)</th>
+                <th>Remaining Balance(<?php echo $settings->currency ?>)</th>
                 <th>Actual Bal(<?php echo $settings->currency ?>)</th>
                 <th>Status</th>
             </tr>
             </thead>
             <tbody>
             <?php
-            $outstanding_balance = get_loan_outstanding_balance($loan_id);
+            $outstanding_balance = $statement_contract_due+$statement_penalties;
             foreach ($payments as $p) {
                 $css = '';
                 $xstatus = '';
-                if ($p->payment_schedule < date('Y-m-d') && $p->status == 'NOT PAID') {
+                if ($p->payment_schedule < date('Y-m-d') && in_array($p->status,array('NOT PAID','PARTIAL PAID'),true)) {
                     $css = ' class="due"';
                     $xstatus = ' | OVER DUE';
                 } elseif ($p->status == 'PAID') {
@@ -102,9 +118,10 @@ $batch_label = !empty($batch_label) ? $batch_label : '';
                     <td <?php echo $css; ?>><?php echo htmlspecialchars($p->payment_schedule); ?></td>
                     <td <?php echo $css; ?>><?php echo number_format($p->principal, 2); ?></td>
                     <td <?php echo $css; ?>><?php echo number_format($p->interest, 2); ?></td>
-                    <td <?php echo $css; ?>><?php echo number_format($p->amount, 2); ?></td>
+                    <td <?php echo $css; ?>><?php echo number_format((float)($p->total_late_charge??0),2); ?></td>
+                    <td <?php echo $css; ?>><?php echo number_format($p->amount+(float)($p->total_late_charge??0), 2); ?></td>
                     <td <?php echo $css; ?>><?php echo number_format($p->paid_amount, 2); ?></td>
-                    <td <?php echo $css; ?>><?php echo number_format($p->loan_balance, 2); ?></td>
+                    <td <?php echo $css; ?>><?php echo number_format($p->contract_balance, 2); ?></td>
                     <td <?php echo $css; ?>><?php echo number_format($outstanding_balance, 2); ?></td>
                     <td><?php echo htmlspecialchars($p->status . $xstatus); ?></td>
                 </tr>

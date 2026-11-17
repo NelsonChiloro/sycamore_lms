@@ -57,7 +57,7 @@
                     <?php
                 }else{
                 ?>
-                <a href="<?php echo base_url('individual_customers/delete/'.$individual_customers->id)?>" onclick="return confirm('Are you sure you want to archive this?')" class="btn btn-danger"><i class="os-icon os-icon-trash"></i>Archive</a>
+                <a href="<?php echo base_url('individual_customers/archive/'.$individual_customers->id)?>" onclick="return confirm('Are you sure you want to archive this?')" class="btn btn-danger"><i class="os-icon os-icon-trash"></i>Archive</a>
                 <?php
                 }
                 ?>

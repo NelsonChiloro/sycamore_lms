@@ -5,7 +5,7 @@ $branches = get_all('branches');
 if (!isset($relationship_supervisors)) {
     $ci =& get_instance();
     $ci->load->model('Employees_model');
-    $relationship_supervisors = $ci->Employees_model->get_relationship_supervisors();
+    $relationship_supervisors = $ci->Employees_model->get_report_supervisors();
 }
 if (!isset($relationship_officers)) {
     if (!isset($ci)) {
@@ -109,7 +109,7 @@ $supervisor_active = ($selected_supervisor !== null && $selected_supervisor !== 
 
 
 
-            <label class="mb-0">Rel. supervisor:</label>
+            <label class="mb-0">Supervisor:</label>
 
             <select name="supervisor" id="loan-filter-supervisor" class="select2" <?php echo $lock_officer ? '' : ''; ?>>
 
@@ -153,13 +153,7 @@ $supervisor_active = ($selected_supervisor !== null && $selected_supervisor !== 
 
                     <?php
 
-                    $officer_list = !empty($relationship_officers) ? $relationship_officers : array();
-
-                    if (empty($officer_list)) {
-
-                        $officer_list = get_all('employees');
-
-                    }
+                    $officer_list = get_report_loan_officers();
 
                     foreach ($officer_list as $item) {
 

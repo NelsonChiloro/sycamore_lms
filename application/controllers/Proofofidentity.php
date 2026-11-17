@@ -319,7 +319,7 @@ class Proofofidentity extends CI_Controller
     
     public function update_action() 
     {
-        $this->_rules();
+        $this->_rules(true);
 
         if ($this->form_validation->run() == FALSE) {
             $this->update($this->input->post('id', TRUE));
@@ -345,6 +345,9 @@ class Proofofidentity extends CI_Controller
 		'id_front' => $this->input->post('id_front',TRUE),
 	    );
 
+            foreach(array('photograph','signature','Id_back','id_front') as $field) {
+                if (!isset($data[$field]) || trim((string)$data[$field])==='') unset($data[$field]);
+            }
             $this->Proofofidentity_model->update($this->input->post('id', TRUE), $data);
             $this->toaster->success('Success!, KYC updated ');
             redirect($_SERVER['HTTP_REFERER']);
@@ -365,7 +368,7 @@ class Proofofidentity extends CI_Controller
         }
     }
 
-    public function _rules() 
+    public function _rules($editing = false)
     {
 	$this->form_validation->set_rules('IDType', 'idtype', 'trim|required');
 	$this->form_validation->set_rules('IDNumber', 'idnumber', 'trim|required');
@@ -373,10 +376,9 @@ class Proofofidentity extends CI_Controller
 	$this->form_validation->set_rules('ExpiryDate', 'expirydate', 'trim|required');
 
 	$this->form_validation->set_rules('ClientId', 'clientid', 'trim|required');
-	$this->form_validation->set_rules('photograph', 'photograph', 'trim|required');
-	$this->form_validation->set_rules('signature', 'signature', 'trim|required');
-	$this->form_validation->set_rules('Id_back', 'id back', 'trim|required');
-	$this->form_validation->set_rules('id_front', 'id front', 'trim|required');
+    foreach(array('photograph','signature','Id_back','id_front') as $field) {
+        $this->form_validation->set_rules($field,$field,$editing?'trim':'trim|required');
+    }
 
 	$this->form_validation->set_rules('id', 'id', 'trim');
 	$this->form_validation->set_error_delimiters('<span class="text-danger">', '</span>');

@@ -1105,6 +1105,8 @@ app.post('/generate-report-upcoming-installment', async (req, res) => {
 
 // 5. Also modify the CRB report endpoint
 app.post('/generate-report-crb', async (req, res) => {
+    try { require('./crbFilters').buildCrbFilters(req.body); }
+    catch (error) { return res.status(400).json({ error: error.message }); }
     // Respond immediately that the report generation is in progress
     res.status(202).json({ message: 'Report generation is processing...' });
 
@@ -1136,7 +1138,7 @@ app.post('/generate-report-crb', async (req, res) => {
             }
 
             // CHANGE: Use relative path for DB storage, but absolute path for file operations
-            const fileName = `reportcrb_${currentDate}.html`;
+            const fileName = `reportcrb_${currentDate}_${result.insertId}.html`;
             const filePath = path.join(directory, fileName); // Absolute path for file operations
             const dbPath = `reports/${fileName}`; // Relative path for database storage
 
@@ -1146,7 +1148,7 @@ app.post('/generate-report-crb', async (req, res) => {
             };
 
             // Generate HTML content
-            const html = await generateHtmlCrb(result.insertId);
+            const html = await generateHtmlCrb(result.insertId, req.body);
 
             // Write file using absolute path for file system operations
             fs.writeFile(filePath, html, (writeErr) => {
@@ -1320,9 +1322,9 @@ function getReportPaths(reportName, timestamp) {
 }
 
 
- async function generateHtmlCrb(reportId){
+ async function generateHtmlCrb(reportId, filters = {}){
   console.log('started processing');
-    let results = await  rbmReport();
+    let results = await rbmReport(filters);
      const totalCount = results.length;
     let table = `<style>
 table, td, th {
@@ -3263,12 +3265,14 @@ app.post('/generate-report-risk-recovery', async (req, res) => {
         }]);
         reportId = insertResult.insertId;
         const timestamp = moment().format('YYYYMMDD_HHmmss');
-        const paths = getReportPaths('Risk_Recovery_Report', timestamp);
+        const paths = getReportPaths('Risk_Recovery_Report', `${timestamp}_${reportId}`);
 
         reportTrackers[reportId] = {
-            percentage: 0,
+            percentage: 5,
             intervalId: setInterval(() => updatePercentageToDB(reportId), 5000),
         };
+
+        await query('UPDATE reports SET percentage = ? WHERE id = ?', [5, reportId]);
 
         const html = await generateRiskRecoveryReport({
             risk_category: firstNonEmpty(req.body.risk_category) || '',
@@ -3290,12 +3294,22 @@ app.post('/generate-report-risk-recovery', async (req, res) => {
     } catch (error) {
         console.error('Risk Recovery Report generation failed:', error);
         if (reportId !== null) {
+            if (reportTrackers[reportId] && reportTrackers[reportId].intervalId) {
+                clearInterval(reportTrackers[reportId].intervalId);
+            }
             await query('UPDATE reports SET ? WHERE id = ?', [{
                 status: 'failed',
                 error_message: error.message,
                 completed_time: new Date(),
             }, reportId]).catch(updateError => {
                 console.error('Failed to update Risk Recovery Report status:', updateError);
+                // Legacy schemas have neither status='failed' nor error_message.
+                // completed_time without 'completed' is a terminal failure marker;
+                // the report list recognizes it without a schema migration.
+                return query('UPDATE reports SET completed_time = ?, percentage = 0 WHERE id = ? AND status = ?',
+                    [new Date(), reportId, 'in progress']).catch(legacyError => {
+                    console.error('Failed to save legacy Risk Recovery failure marker:', legacyError);
+                });
             });
         }
     } finally {

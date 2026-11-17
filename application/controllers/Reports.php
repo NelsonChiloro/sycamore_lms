@@ -802,16 +802,10 @@ private function run_summary_query($sql, $binds = array(), $multiple = false)
 
     {
 
-        $page_number = $this->input->get('page') ? (int)$this->input->get('page') : 1;
-        $rows_per_page = 3;
-
-        $data = rbm_report($page_number, $rows_per_page);
-        $data['page_number'] = $page_number;
-        $data['rows_per_page'] = $rows_per_page;
-        $data['total_pages'] = ceil($data['total_rows'] / $rows_per_page);
-        $from = $this->input->get('from');
-        $to = $this->input->get('to');
-        $search = $this->input->get('search');
+        $data = array(
+            'products'=>$this->db->select('loan_product_id,product_name')->order_by('product_name')->get('loan_products')->result(),
+            'branches'=>$this->db->select('id,BranchName')->order_by('BranchName')->get('branches')->result()
+        );
 
 
         $this->load->view('admin/header');
@@ -929,6 +923,23 @@ private function run_summary_query($sql, $binds = array(), $multiple = false)
     }
     public function export_crb()
     {
+        $filters=array();
+        foreach(array('loan_status','product','branch','date_from','date_to') as $field) {
+            $value=$this->input->get($field,true);
+            if ($value!==null && !is_scalar($value)) {show_error('Invalid CRB filter.',400);return;}
+            $filters[$field]=trim((string)$value);
+        }
+        $filters['loan_status']=strtoupper($filters['loan_status']?:'ALL');
+        if (!in_array($filters['loan_status'],array('ALL','ACTIVE','PAID_UP','WRITTEN_OFF'),true)) {show_error('Invalid CRB status.',400);return;}
+        foreach(array('product','branch') as $field) {
+            if ($filters[$field]!=='' && !preg_match('/^[1-9][0-9]*$/',$filters[$field])) {show_error('Invalid CRB filter.',400);return;}
+        }
+        foreach(array('date_from','date_to') as $field) {
+            if ($filters[$field]==='') continue;
+            $date=DateTime::createFromFormat('!Y-m-d',$filters[$field]);
+            if (!$date || $date->format('Y-m-d')!==$filters[$field]) {show_error('Invalid loan date.',400);return;}
+        }
+        if ($filters['date_from']!=='' && $filters['date_to']!=='' && $filters['date_from']>$filters['date_to']) {show_error('Loan date from must not exceed loan date to.',400);return;}
 
 
 // Initialize cURL session
@@ -939,10 +950,11 @@ private function run_summary_query($sql, $binds = array(), $multiple = false)
 
 // Prepare the data to be sent
         $data = [
-            "report_type" => "CRB reports",
+            "report_type" => "CRB reports - ".$filters['loan_status'],
             "user" => $this->session->userdata('Firstname')." ".$this->session->userdata('Lastname'),
             "user_id" => $this->session->userdata('user_id')
         ];
+        $data=array_merge($data,$filters);
 
 // Convert the data array to JSON
         $jsonData = json_encode($data);
@@ -961,8 +973,10 @@ private function run_summary_query($sql, $binds = array(), $multiple = false)
         $response = curl_exec($ch);
 
 // Check for errors
-        if (curl_errno($ch)) {
-            echo 'Error:' . curl_error($ch);
+        if (curl_errno($ch) || curl_getinfo($ch,CURLINFO_HTTP_CODE)>=400) {
+            log_message('error','CRB report service failed: '.curl_error($ch).' '.$response);
+            $this->toaster->error('CRB report could not be queued. Check the report service and selected filters.');
+            redirect(site_url('Reports/crb'));
         } else {
             // Print the response
             $this->toaster->success('Success, Report is being processed you may do other things and come back for progress');

@@ -1,24 +1,12 @@
-<!doctype html>
-<html>
-    <head>
-        <title>harviacode.com - codeigniter crud generator</title>
-        <link rel="stylesheet" href="<?php echo base_url('assets/bootstrap/css/bootstrap.min.css') ?>"/>
-        <style>
-            body{
-                padding: 15px;
-            }
-        </style>
-    </head>
-    <body>
-        <h2 style="margin-top:0px">Branches Read</h2>
+<div class="main-content">
+    <div class="page-header"><h2 class="header-title">Branch Details</h2></div>
+    <div class="card"><div class="card-body">
         <table class="table">
-	    <tr><td>BranchCode</td><td><?php echo $BranchCode; ?></td></tr>
-	    <tr><td>BranchName</td><td><?php echo $BranchName; ?></td></tr>
-	    <tr><td>AddressLine1</td><td><?php echo $AddressLine1; ?></td></tr>
-	    <tr><td>AddressLine2</td><td><?php echo $AddressLine2; ?></td></tr>
-	    <tr><td>City</td><td><?php echo $City; ?></td></tr>
-	    <tr><td>Stamp</td><td><?php echo $Stamp; ?></td></tr>
-	    <tr><td></td><td><a href="<?php echo site_url('branches') ?>" class="btn btn-default">Cancel</a></td></tr>
-	</table>
-        </body>
-</html>
+            <?php foreach(array('BranchCode'=>'Branch code','BranchName'=>'Branch name','AddressLine1'=>'Address line 1','AddressLine2'=>'Address line 2','City'=>'City','Stamp'=>'Last updated') as $field=>$label): ?>
+            <tr><th><?php echo $label; ?></th><td><?php echo htmlspecialchars((string)($$field??''),ENT_QUOTES,'UTF-8'); ?></td></tr>
+            <?php endforeach; ?>
+        </table>
+        <a href="<?php echo site_url('branches/update/'.(int)$id); ?>" class="btn btn-primary">Update Branch</a>
+        <a href="<?php echo site_url('branches'); ?>" class="btn btn-default">Back to Branches</a>
+    </div></div>
+</div>

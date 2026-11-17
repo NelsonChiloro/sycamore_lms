@@ -66,15 +66,7 @@ class Group_batch_model extends CI_Model
             }
 
             $summary->active_count++;
-            $product_id = (int) ($loan->loan_product ?? 0);
-            if (!array_key_exists($product_id, $product_penalties)) {
-                $product = $product_id > 0
-                    ? $this->db->select('penalty, product_name')->where('loan_product_id', $product_id)->get('loan_products')->row()
-                    : null;
-                $is_zitsamba = $product && strtoupper(trim((string)$product->product_name)) === 'ZITSAMBA';
-                $product_penalties[$product_id] = ($product && !$is_zitsamba) ? (float) $product->penalty : 0.0;
-            }
-            $penalties_apply = $product_penalties[$product_id] > 0;
+            $penalties_apply = true;
             $summary->total_principal += (float) $loan->loan_principal;
             $summary->total_interest += (float) ($loan->loan_interest_amount ?? 0);
 

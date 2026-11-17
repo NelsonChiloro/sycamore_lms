@@ -59,14 +59,33 @@ class Branches_model extends CI_Model
     // insert data
     function insert($data)
     {
-        $this->db->insert($this->table, $data);
+        // Stamp is maintained by MySQL; never write an absent form value to it.
+        unset($data['Stamp']);
+        for($attempt=0;$attempt<20;$attempt++) {
+            $data['Code']=(string)random_int(100,9999);
+            if (!$this->db->where('Code',$data['Code'])->count_all_results($this->table)) break;
+        }
+        if ($attempt===20) return false;
+        $debug=$this->db->db_debug;$this->db->db_debug=false;
+        try {return $this->db->insert($this->table,$data);}
+        finally {$this->db->db_debug=$debug;}
     }
 
     // update data
     function update($id, $data)
     {
-        $this->db->where($this->id, $id);
-        $this->db->update($this->table, $data);
+        unset($data['Stamp'],$data['Code'],$data['id']);
+        $debug=$this->db->db_debug;$this->db->db_debug=false;
+        try {return $this->db->where($this->id,(int)$id)->update($this->table,$data);}
+        finally {$this->db->db_debug=$debug;}
+    }
+
+    public function value_exists($field,$value,$exclude_id=0) {
+        if (!in_array($field,array('BranchCode','BranchName'),true)) throw new InvalidArgumentException('Invalid branch field.');
+        if ($field==='BranchCode') $this->db->where($field,(int)$value);
+        else $this->db->where('LOWER(TRIM(BranchName))',strtolower(trim((string)$value)));
+        if ($exclude_id>0) $this->db->where('id !=',(int)$exclude_id);
+        return $this->db->count_all_results($this->table)>0;
     }
 
     // delete data

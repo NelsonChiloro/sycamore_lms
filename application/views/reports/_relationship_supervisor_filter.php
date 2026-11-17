@@ -9,7 +9,7 @@ if ($selected_supervisor === null || $selected_supervisor === '') {
 $supervisor_active = ($selected_supervisor !== null && $selected_supervisor !== '' && $selected_supervisor !== 'All');
 $officer_select_id = !empty($officer_select_id) ? $officer_select_id : 'report-filter-officer';
 ?>
-<label class="mb-0">Rel. supervisor:</label>
+<label class="mb-0">Supervisor:</label>
 <select name="supervisor" id="report-filter-supervisor" class="select2 form-control" style="min-width: 160px;">
     <option value="All">All supervisors</option>
     <?php foreach ($relationship_supervisors as $sup) { ?>

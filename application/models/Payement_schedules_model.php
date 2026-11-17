@@ -81,6 +81,18 @@ class Payement_schedules_model extends CI_Model
         if (empty($schedules)) {
             return;
         }
+        if ($this->db->table_exists('loan_charge_state') && $this->db->where('loan_id', $loan_number)->count_all_results('loan_charge_state') > 0) {
+            // Component balances are authoritative. Restructure replays receipts
+            // in installment order; do not redistribute contract cash separately
+            // from the penalties paid by those same receipts.
+            $next = $this->db->where('loan_id', $loan_number)
+                ->group_start()->where('status !=', 'PAID')->or_where('total_late_charge >', 0)->group_end()
+                ->order_by('payment_number')->get($this->table)->row();
+            $last = end($schedules);
+            $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$next ? $next->payment_number : $last->payment_number+1));
+            $this->recalculate_loan_balances($loan_number);
+            return;
+        }
 
         $total_paid = 0.0;
         $last_payment_number = 0;
@@ -125,6 +137,7 @@ class Payement_schedules_model extends CI_Model
 
         $next_payment_id = ($first_incomplete !== null) ? $first_incomplete : ($last_payment_number + 1);
         $this->db->where('loan_id', $loan_number)->update('loan', array('next_payment_id' => $next_payment_id));
+        $this->recalculate_loan_balances($loan_number);
     }
 
     public function normalize_after_reversal($loan_number)
@@ -141,330 +154,128 @@ class Payement_schedules_model extends CI_Model
      */
     public function repair_loan_payment_state($loan_id)
     {
-        $loan_id = (int)$loan_id;
-        if ($loan_id <= 0) {
-            return array('error' => 'Invalid loan ID.');
-        }
-
-        $loan = $this->db->where('loan_id', $loan_id)->get('loan')->row();
-        if (!$loan) {
-            return array('error' => 'Loan was not found.');
-        }
-
-        $schedules = $this->db
-            ->where('loan_id', $loan_id)
-            ->order_by('payment_number', 'ASC')
-            ->get($this->table)
-            ->result();
-        if (empty($schedules)) {
-            return array('error' => 'No payment schedules were found for this loan.');
-        }
-
-        $transaction_total_row = $this->db->query(
-            "SELECT
-                COALESCE(SUM(valid_allocations.amount), 0) AS total_paid,
-                MAX(valid_allocations.date_stamp) AS last_payment_date
-             FROM transactions valid_allocations
-             WHERE valid_allocations.loan_id = ?
-               AND valid_allocations.transaction_type = 3
-               AND valid_allocations.amount > 0
-               AND NOT EXISTS (
-                   SELECT 1
-                   FROM transaction account_transaction
-                   WHERE account_transaction.transaction_id = valid_allocations.ref
-                     AND account_transaction.reversed = 'Yes'
-               )",
-            array($loan_id)
-        )->row();
-
-        $total_transaction_paid = round(max(0, (float)($transaction_total_row->total_paid ?? 0)), 2);
-        $allocation_rows = $this->db->query(
-            "SELECT valid_allocations.payment_number,
-                    COALESCE(SUM(valid_allocations.amount), 0) AS amount_paid,
-                    MAX(valid_allocations.date_stamp) AS paid_date
-             FROM transactions valid_allocations
-             WHERE valid_allocations.loan_id = ?
-               AND valid_allocations.transaction_type = 3
-               AND valid_allocations.amount > 0
-               AND NOT EXISTS (
-                   SELECT 1 FROM transaction account_transaction
-                   WHERE account_transaction.transaction_id = valid_allocations.ref
-                     AND account_transaction.reversed = 'Yes'
-               )
-             GROUP BY valid_allocations.payment_number",
-            array($loan_id)
-        )->result();
-        $allocations_by_payment = array();
-        foreach ($allocation_rows as $allocation_row) {
-            $allocations_by_payment[(int)$allocation_row->payment_number] = $allocation_row;
-        }
-        $total_schedule_amount = 0.0;
-        foreach ($schedules as $schedule) {
-            $total_schedule_amount += max(0, (float)$schedule->amount);
-        }
-        $total_schedule_amount = round($total_schedule_amount, 2);
-        $amount_to_apply = min($total_transaction_paid, $total_schedule_amount);
-        $fallback_date = !empty($transaction_total_row->last_payment_date)
-            && substr((string)$transaction_total_row->last_payment_date, 0, 10) !== '0000-00-00'
-            ? substr((string)$transaction_total_row->last_payment_date, 0, 10)
-            : date('Y-m-d');
-
         $this->db->trans_begin();
-
-        $this->db->where('loan_id', $loan_id)->update($this->table, array(
-            'paid_amount' => 0,
-            'paid_date' => null,
-            'status' => 'NOT PAID',
-            'partial_paid' => 'NO',
-        ));
-
-        foreach ($schedules as $schedule) {
-            $schedule_amount = max(0, (float)$schedule->amount);
-            if ($schedule_amount <= 0) {
-                continue;
+        try {
+            $charges=$this->charge_model(); $charges->assert_installed();
+            $loan=$this->db->query('SELECT * FROM loan WHERE loan_id = ? FOR UPDATE',array((int)$loan_id))->row();
+            if (!$loan) throw new RuntimeException('Loan was not found.');
+            $rows=$this->db->where('loan_id',(int)$loan_id)->order_by('payment_number')->get($this->table)->result();
+            if (!$rows) throw new RuntimeException('No payment schedules were found.');
+            $states=$charges->states($loan_id,$rows);
+            $valid=$this->db->query("SELECT t.* FROM transactions t WHERE t.loan_id=? AND t.transaction_type=3 AND t.amount>0
+                AND NOT EXISTS(SELECT 1 FROM transaction a WHERE a.transaction_id=t.ref AND a.reversed='Yes')
+                ORDER BY t.date_stamp,t.transaction_id",array((int)$loan_id))->result();
+            $ledger_count=$this->db->where('loan_id',(int)$loan_id)->where('transaction_type',3)->count_all_results('transactions');
+            $existing=0; foreach($rows as $row) $existing+=(float)$row->paid_amount;
+            if (!$ledger_count && $existing>.01) throw new RuntimeException('Schedule payments have no repayment history. Reconcile the source records first.');
+            $legacy=0; $total=0; $new=array(); $last_date=null;
+            foreach($valid as $payment) {
+                $total+=(float)$payment->amount; $last_date=$payment->date_stamp;
+                if ($payment->description!=='charge_policy_v1') $legacy+=(float)$payment->amount;
+                else {
+                    $key=$payment->ref.'|'.$payment->date_stamp;
+                    if (!isset($new[$key])) $new[$key]=array('amount'=>0,'date'=>$payment->date_stamp);
+                    $new[$key]['amount']+=(float)$payment->amount;
+                }
             }
-
-            $allocation = $allocations_by_payment[(int)$schedule->payment_number] ?? null;
-            $applied = min($schedule_amount, max(0, (float)($allocation->amount_paid ?? 0)));
-            if ($applied <= 0) {
-                continue;
+            $left=$legacy; $capacity=0;
+            foreach($rows as $row) {
+                $n=$row->payment_number; $capacity+=(float)$row->amount;
+                $copy=clone $row; $copy->paid_amount=min(max(0,$left),(float)$row->amount);
+                $left-=$copy->paid_amount;
+                $states[$n]=array_merge($states[$n],Loan_charge_policy::seed($copy));
+                $paid_penalty=$this->db->query("SELECT COALESCE(SUM(c.amount),0) total FROM loan_payment_components c
+                    WHERE c.loan_id=? AND c.payment_number=? AND c.component='penalty'
+                    AND NOT EXISTS(SELECT 1 FROM transaction a WHERE a.transaction_id=c.ref AND a.reversed='Yes')",array((int)$loan_id,$n))->row();
+                $states[$n]['penalty_paid']=(float)$paid_penalty->total;
             }
-            $is_paid = ($applied + 0.0001) >= $schedule_amount;
-            $allocation_date = !empty($allocation->paid_date)
-                && substr((string)$allocation->paid_date, 0, 10) !== '0000-00-00'
-                ? substr((string)$allocation->paid_date, 0, 10)
-                : $fallback_date;
-            $this->db->where('id', $schedule->id)->update($this->table, array(
-                'paid_amount' => $applied,
-                'paid_date' => $allocation_date,
-                'status' => $is_paid ? 'PAID' : 'PARTIAL PAID',
-                'partial_paid' => $is_paid ? 'NO' : 'YES',
-            ));
-        }
-
-        $this->normalize_schedule_payment_allocation($loan_id);
-        $this->recalculate_loan_balances($loan_id);
-
-        $is_fully_paid = $amount_to_apply + 0.01 >= $total_schedule_amount;
-        $this->db->where('loan_id', $loan_id)->update('loan', array(
-            'loan_status' => $is_fully_paid ? 'CLOSED' : 'ACTIVE',
-        ));
-
-        if ($this->db->trans_status() === false) {
-            $this->db->trans_rollback();
-            return array('error' => 'The database rejected the schedule repair.');
-        }
-
-        $this->db->trans_commit();
-
-        return array(
-            'loan_id' => $loan_id,
-            'total_txn_paid' => $total_transaction_paid,
-            'total_schedule_amount' => $total_schedule_amount,
-            'applied' => round($amount_to_apply, 2),
-        );
+            foreach($new as $payment) {
+                $allocation=Loan_charge_policy::allocate($rows,$states,$payment['amount'],$payment['date'],false);
+                $states=$allocation['states'];
+            }
+            $applied=0;
+            foreach($states as $state) foreach(Loan_charge_policy::$components as $component=>$field) $applied+=(float)$state['paid_'.$component];
+            if (abs($applied-min($capacity,$total))>.02) throw new RuntimeException('Repayment totals did not reconcile.');
+            $charges->save_states($loan_id,$rows,$states,$last_date);
+            $this->normalize_schedule_payment_allocation($loan_id);
+            if (in_array($loan->loan_status,array('ACTIVE','CLOSED'),true)) {
+                $this->db->where('loan_id',(int)$loan_id)->update('loan',array('loan_status'=>$this->is_loan_fully_paid($loan_id)?'CLOSED':'ACTIVE'));
+            }
+            if (!$this->db->trans_status()) throw new RuntimeException('Schedule reconciliation failed.');
+            $this->db->trans_commit();
+            return array('loan_id'=>(int)$loan_id,'total_txn_paid'=>round($total,2),'total_schedule_amount'=>round($capacity,2),'applied'=>round($applied,2),'unapplied'=>round(max(0,$total-$applied),2));
+        } catch(Throwable $e) { $this->db->trans_rollback(); return array('error'=>$e->getMessage()); }
     }
-
     /**
      * Pay loan with late charges allocation priority
      * Payment sequence: Late charges -> Loan cover -> Admin fees -> Interest -> Principal
      */
-    public function pay_loan_with_late_charges($loan_number, $pay_number, $amount, $date, $tid) {
-        // Keep allocations sequential before applying payment.
-        $this->normalize_schedule_payment_allocation($loan_number);
-
-        // Get payment schedule details
-        $this->db->select("*")->from($this->table);
-        $this->db->where('loan_id', $loan_number);
-        $this->db->where('payment_number', $pay_number);
-        $schedule = $this->db->get()->row();
-
-        if (!$schedule) {
-            return false;
-        }
-
-        $remaining_amount = $amount;
-        $allocation_log = [];
-
-        // 1. Pay Late Charges first
-        $late_charges = $schedule->total_late_charge ?? 0;
-        if ($late_charges > 0 && $remaining_amount > 0) {
-            $late_charge_payment = min($remaining_amount, $late_charges);
-            $remaining_amount -= $late_charge_payment;
-
-            // Update late charges
-            $new_late_charges = $late_charges - $late_charge_payment;
-            $this->db->where('loan_id', $loan_number);
-            $this->db->where('payment_number', $pay_number);
-            $this->db->update($this->table, ['total_late_charge' => $new_late_charges]);
-
-            $allocation_log[] = "Late Charges: MWK " . number_format($late_charge_payment, 2);
-        }
-
-        // Calculate remaining dues for each component
-        $total_schedule_amount = ($schedule->amount ?? 0);
-        $already_paid = ($schedule->paid_amount ?? 0);
-        $schedule_balance = $total_schedule_amount - $already_paid;
-
-        // If there's still remaining amount after late charges, allocate to schedule components
-        if ($remaining_amount > 0 && $schedule_balance > 0) {
-            $schedule_payment = min($remaining_amount, $schedule_balance);
-            $remaining_amount -= $schedule_payment;
-
-            // Update paid amount
-            $new_paid_amount = $already_paid + $schedule_payment;
-
-            $update_data = [
-                'paid_amount' => $new_paid_amount,
-                'paid_date' => $date
-            ];
-
-            // Check if fully paid (including late charges)
-            if ($new_paid_amount >= $total_schedule_amount && ($schedule->total_late_charge ?? 0) == 0) {
-                $update_data['status'] = 'PAID';
-                $update_data['partial_paid'] = 'NO';
-
-                // Update next payment ID
-                $this->db->where('loan_id', $loan_number)
-                         ->update('loan', ['next_payment_id' => $pay_number + 1]);
-
-                $this->_should_close_loan($loan_number, $pay_number);
-            } else {
-                $update_data['partial_paid'] = 'YES';
-            }
-
-            $this->db->where('loan_id', $loan_number);
-            $this->db->where('payment_number', $pay_number);
-            $this->db->update($this->table, $update_data);
-
-            $allocation_log[] = "Schedule Payment: MWK " . number_format($schedule_payment, 2);
-        }
-
-        // Record transaction
-        $total_payment = $amount - $remaining_amount;
-        $transaction = array(
-            'ref' => $tid,
-            'loan_id' => $loan_number,
-            'amount' => $total_payment,
-            'payment_number' => $pay_number,
-            'transaction_type' => 3,
-            'payment_proof' => 'null',
-            'added_by' => $this->session->userdata('user_id'),
-            'date_stamp' => $date
-        );
-        $this->insert_transaction_compat($transaction);
-
-        $this->normalize_schedule_payment_allocation($loan_number);
-
-        return [
-            'success' => true,
-            'amount_allocated' => $total_payment,
-            'remaining_amount' => $remaining_amount,
-            'allocation_log' => $allocation_log
-        ];
+    private function charge_model()
+    {
+        $this->load->model('Late_charges_model');
+        return $this->Late_charges_model;
     }
 
-    /**
-     * Apply a standard repayment starting from a given schedule number.
-     * Allocates sequentially, updates statuses consistently, and logs each allocation.
-     */
+    public function pay_loan_with_late_charges($loan_number, $pay_number, $amount, $date, $tid)
+    {
+        return $this->allocate_framework_payment($loan_number, $amount, $date, $tid);
+    }
+
     private function process_standard_payment($loan_number, $pay_number, $amount, $date, $tid)
     {
-        $loan_number = (int)$loan_number;
-        $pay_number = (int)$pay_number;
-        $remaining = (float)$amount;
-
-        if ($loan_number <= 0 || $pay_number <= 0 || $remaining <= 0) {
-            return false;
-        }
-
-        // Repair any historical out-of-order partial allocations first.
-        $this->normalize_schedule_payment_allocation($loan_number);
-
-        // Always start from the earliest incomplete schedule (NOT PAID or PARTIAL PAID).
-        // If there is a PARTIAL PAID schedule with a lower number than $pay_number, start there.
-        $earliest_row = $this->db->select('MIN(payment_number) as min_pn')
-            ->from($this->table)
-            ->where('loan_id', $loan_number)
-            ->where_in('status', array('NOT PAID', 'PARTIAL PAID'))
-            ->get()->row();
-        $effective_start = !empty($earliest_row) && $earliest_row->min_pn !== null
-            ? min((int)$pay_number, (int)$earliest_row->min_pn)
-            : $pay_number;
-
-        $schedules = $this->db->select('*')
-            ->from($this->table)
-            ->where('loan_id', $loan_number)
-            ->where('payment_number >=', $effective_start)
-            ->where_in('status', array('NOT PAID', 'PARTIAL PAID'))
-            ->order_by('payment_number', 'ASC')
-            ->get()
-            ->result();
-
-        if (empty($schedules)) {
-            return false;
-        }
-
-        $applied = 0.0;
-        foreach ($schedules as $schedule) {
-            if ($remaining <= 0) {
-                break;
-            }
-
-            $already_paid = (float)$schedule->paid_amount;
-            $schedule_amount = (float)$schedule->amount;
-            $due = $schedule_amount - $already_paid;
-
-            if ($due <= 0) {
-                continue;
-            }
-
-            $pay_now = min($remaining, $due);
-            $new_paid = $already_paid + $pay_now;
-            $is_fully_paid = ($new_paid + 0.0001) >= $schedule_amount;
-
-            $update_data = array(
-                'paid_amount' => $new_paid,
-                'paid_date' => $date,
-                'partial_paid' => $is_fully_paid ? 'NO' : 'YES',
-                'status' => $is_fully_paid ? 'PAID' : 'PARTIAL PAID',
-            );
-
-            $this->db->where('loan_id', $loan_number)
-                ->where('payment_number', (int)$schedule->payment_number)
-                ->update($this->table, $update_data);
-
-            if ($is_fully_paid) {
-                $this->db->where('loan_id', $loan_number)
-                    ->update('loan', array('next_payment_id' => ((int)$schedule->payment_number) + 1));
-
-                $this->_should_close_loan($loan_number, (int)$schedule->payment_number);
-            }
-
-            $transaction = array(
-                'ref' => $tid,
-                'loan_id' => $loan_number,
-                'amount' => $pay_now,
-                'payment_number' => (int)$schedule->payment_number,
-                'transaction_type' => 3,
-                'payment_proof' => 'null',
-                'added_by' => $this->session->userdata('user_id'),
-                'date_stamp' => $date,
-            );
-            $this->insert_transaction_compat($transaction);
-
-            $remaining -= $pay_now;
-            $applied += $pay_now;
-        }
-
-        if ($applied > 0) {
-            $this->normalize_schedule_payment_allocation($loan_number);
-            return true;
-        }
-
-        return false;
+        $result = $this->allocate_framework_payment($loan_number, $amount, $date, $tid);
+        return !empty($result['success']);
     }
 
+    private function allocate_framework_payment($loan_id, $amount, $date, $tid)
+    {
+        if ((int)$loan_id <= 0 || !is_numeric($amount) || (float)$amount <= 0 || !is_finite((float)$amount)) return array('success'=>false);
+        $this->db->trans_begin();
+        try {
+            $charges=$this->charge_model();
+            $charges->assert_installed();
+            $loan=$this->db->query('SELECT * FROM loan WHERE loan_id = ? FOR UPDATE',array((int)$loan_id))->row();
+            if (!$loan || $loan->loan_status!=='ACTIVE') throw new RuntimeException('Only active loans accept repayments.');
+            if ($this->db->where('loan_id',(int)$loan_id)->where('ref',$tid)->count_all_results('loan_payment_components')) throw new RuntimeException('This repayment reference has already been allocated.');
+            $today=(new DateTimeImmutable('now',new DateTimeZone('Africa/Blantyre')))->format('Y-m-d');
+            if (substr($date,0,10)>$today) throw new RuntimeException('Future-dated repayments are not supported.');
+            $current=$charges->refresh_loan($loan_id,$date);
+            $allocated=Loan_charge_policy::allocate($current['rows'],$current['states'],round((float)$amount,2),$date);
+            if ($allocated['remaining']>0.005) throw new RuntimeException('Payment exceeds the total outstanding balance.');
+            $contracts=array(); $log=array();
+            foreach($allocated['allocations'] as $allocation) {
+                $component=$allocation['component']; $n=$allocation['payment_number'];
+                $this->db->insert('loan_payment_components',array_merge($allocation,array('loan_id'=>(int)$loan_id,'ref'=>$tid,'paid_at'=>$date)));
+                $log[$component]=($log[$component]??0)+$allocation['amount'];
+                if ($component!=='penalty') $contracts[$n]=($contracts[$n]??0)+$allocation['amount'];
+            }
+            // Type 3 is contract repayment only. Penalties have their own ledger
+            // and must never inflate schedule paid_amount or principal.
+            foreach($contracts as $number=>$paid) $this->insert_transaction_compat(array(
+                'ref'=>$tid,'loan_id'=>(int)$loan_id,'amount'=>round($paid,2),'payment_number'=>$number,
+                'transaction_type'=>3,'description'=>'charge_policy_v1','payment_proof'=>'null',
+                'added_by'=>$this->session->userdata('user_id'),'date_stamp'=>$date));
+            foreach($allocated['allocations'] as $allocation) {
+                if ($allocation['component'] !== 'penalty') continue;
+                $this->insert_transaction_compat(array('ref'=>$tid,'loan_id'=>(int)$loan_id,
+                    'amount'=>$allocation['amount'],'payment_number'=>$allocation['payment_number'],
+                    'transaction_type'=>2,'description'=>'charge_policy_v1','payment_proof'=>'null',
+                    'added_by'=>$this->session->userdata('user_id'),'date_stamp'=>$date));
+            }
+            $charges->save_states($loan_id,$current['rows'],$allocated['states'],$date);
+            $this->normalize_schedule_payment_allocation($loan_id);
+            $this->close_loan_if_fully_paid($loan_id);
+            if (!$this->db->trans_status()) throw new RuntimeException('Repayment allocation failed.');
+            $this->db->trans_commit();
+            $messages=array();
+            foreach($log as $component=>$paid) $messages[]=ucfirst($component).': MWK '.number_format($paid,2);
+            return array('success'=>true,'amount_allocated'=>round((float)$amount,2),'remaining_amount'=>0,'allocation_log'=>$messages);
+        } catch (Throwable $e) {
+            $this->db->trans_rollback();
+            log_message('error','Loan payment allocation: '.$e->getMessage());
+            return array('success'=>false,'error'=>$e->getMessage());
+        }
+    }
     // get all
     function get_all()
     {
@@ -473,6 +284,7 @@ class Payement_schedules_model extends CI_Model
     }
 	function get_all_by_id($id)
 	{
+        $this->charge_model()->refresh_loan($id);
         $this->normalize_schedule_payment_allocation($id);
 		$this->db->select('*');
 		$this->db->order_by($this->id, $this->order);
@@ -480,355 +292,13 @@ class Payement_schedules_model extends CI_Model
 		$this->db->where('payement_schedules.loan_id',$id);
 		return $this->db->get($this->table)->result();
 	}
-    public function new_pay_new($loan_number,$pay_number,$amount, $date, $tid){
-        return $this->process_standard_payment($loan_number, $pay_number, $amount, $date, $tid);
 
-        $this->db->select("*")->from($this->table);
-        $this->db->where('loan_id', $loan_number);
-        $this->db->where('payment_number', $pay_number);
-        $get_real_amount = $this->db->get()->row();
-        $to_pay = $get_real_amount->amount - $get_real_amount->paid_amount ;
-
-
-        if(intval($to_pay) > intval($amount) ){
-
-
-            $final_paid = $amount + $get_real_amount->paid_amount ;
-            $data = array(
-                'partial_paid'=>'YES',
-
-                'paid_amount'=>$final_paid,
-                'paid_date'=> $date
-            );
-            $this->db->where('loan_id', $loan_number);
-            $this->db->where('payment_number', $pay_number);
-            $this->db->update($this->table,$data);
-
-            $transaction = array(
-                'ref' =>$tid,
-                'loan_id' => $loan_number,
-                'amount' => $final_paid,
-                'payment_number' => $pay_number,
-                'transaction_type' => 3,
-                'payment_proof' => 'null',
-                'added_by' => $this->session->userdata('user_id'),
-                'date_stamp'=> $date
-
-            );
-            $this->insert_transaction_compat($transaction);
-            return true;
-
-        }
-        elseif(intval($amount) > intval($to_pay)) {
-
-            $our_amount = $amount;
-//get all loans
-            $this->db->select("*")
-                ->from($this->table)
-
-                ->where('loan_id', $loan_number)
-                ->where('status', 'NOT PAID');
-//                ->or_where('partial_paid', 'NO');
-            $this->db->order_by('payment_number', 'ASC');
-
-            $result = $this->db->get()->result();
-
-            foreach ($result as $lr){
-
-
-
-
-                if($our_amount < ($lr->amount-$lr->paid_amount) ){
-                    $data = array(
-                        'partial_paid'=>'YES',
-                        'paid_amount'=>$our_amount,
-                        'paid_date'=> $date
-                    );
-                    $this->db->where('loan_id', $loan_number);
-                    $this->db->where('payment_number',  $lr->payment_number);
-                    $this->db->update($this->table,$data);
-
-                    $transaction = array(
-                        'ref' => $tid,
-                        'loan_id' => $loan_number,
-                        'amount' => $our_amount ,
-                        'payment_number' =>  $lr->payment_number,
-                        'transaction_type' => 3,
-                        'payment_proof' => 'null',
-                        'added_by' => $this->session->userdata('user_id'),
-                        'date_stamp'=> $date
-
-                    );
-                    $this->insert_transaction_compat($transaction);
-                    return true;
-                }
-                elseif($our_amount==($lr->amount-$lr->paid_amount)){
-                    $data = array(
-                        'partial_paid'=>'NO',
-                        'status'=>'PAID',
-                        'paid_amount'=>$our_amount,
-                        'paid_date'=> $date
-                    );
-                    $this->db->where('loan_id', $loan_number);
-                    $this->db->where('payment_number', $lr->payment_number);
-                    $this->db->update($this->table,$data);
-                    $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$lr->payment_number+1));
-                    $this->_should_close_loan($loan_number, $lr->payment_number);
-                    $transaction = array(
-                        'ref' => $tid,
-                        'loan_id' => $loan_number,
-                        'amount' => $our_amount,
-                        'payment_number' => $lr->payment_number,
-                        'transaction_type' => 3,
-                        'payment_proof' => 'null',
-                        'added_by' => $this->session->userdata('user_id'),
-                        'date_stamp'=> $date
-
-                    );
-                    $this->insert_transaction_compat($transaction);
-                    return true;
-                }
-                else{
-                    $our_amount = $our_amount - ($lr->amount-$lr->paid_amount);
-                    $data = array(
-                        'partial_paid'=>'NO',
-                        'status'=>'PAID',
-                        'paid_amount'=>$lr->amount,
-                        'paid_date'=> $date
-                    );
-                    $this->db->where('loan_id', $loan_number);
-                    $this->db->where('payment_number', $lr->payment_number);
-                    $this->db->update($this->table,$data);
-                    $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$lr->payment_number+1));
-                    $this->_should_close_loan($loan_number, $lr->payment_number);
-                    $transaction = array(
-                        'ref' => $tid,
-                        'loan_id' => $loan_number,
-                        'amount' => $lr->amount,
-                        'payment_number' => $lr->payment_number,
-                        'transaction_type' => 3,
-                        'payment_proof' => 'null',
-                        'added_by' => $this->session->userdata('user_id'),
-                        'date_stamp'=> $date
-
-                    );
-                    $this->insert_transaction_compat($transaction);
-                }
-
-            }
-            return true;
-
-        }
-
-        elseif(intval($to_pay) === intval($amount)){
-
-            $new_to_pay = $amount;
-            $final_paid = $new_to_pay + $get_real_amount->paid_amount ;
-
-            $data = array(
-                'partial_paid'=>'NO',
-                'status'=>'PAID',
-                'paid_amount'=>$final_paid,
-                'paid_date'=> $date
-            );
-            $this->db->where('loan_id', $loan_number);
-            $this->db->where('payment_number', $pay_number);
-            $this->db->update($this->table,$data);
-            $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$pay_number+1));
-            $this->_should_close_loan($loan_number, $pay_number);
-            $transaction = array(
-                'ref' => $tid,
-                'loan_id' => $loan_number,
-                'amount' => $final_paid,
-                'payment_number' => $pay_number,
-                'transaction_type' => 3,
-                'payment_proof' => 'null',
-                'added_by' => $this->session->userdata('user_id'),
-                'date_stamp'=> $date
-
-            );
-            $this->insert_transaction_compat($transaction);
-            return true;
-
-        }
-        else{
-
-        }
+    public function new_pay_new($loan_number,$pay_number,$amount,$date,$tid) {
+        return $this->process_standard_payment($loan_number,$pay_number,$amount,$date,$tid);
     }
-    public function pay_off($loan_number,$pay_number,$amount, $date, $tid){
-        return $this->process_standard_payment($loan_number, $pay_number, $amount, $date, $tid);
 
-        $this->db->select("*")->from($this->table);
-        $this->db->where('loan_id', $loan_number);
-        $this->db->where('payment_number', $pay_number);
-        $get_real_amount = $this->db->get()->row();
-        $to_pay = $get_real_amount->amount - $get_real_amount->paid_amount ;
-
-
-        if(intval($to_pay) > intval($amount) ){
-
-
-            $final_paid = $amount + $get_real_amount->paid_amount ;
-            $data = array(
-                'partial_paid'=>'YES',
-
-                'paid_amount'=>$final_paid,
-                'paid_date'=> $date
-            );
-            $this->db->where('loan_id', $loan_number);
-            $this->db->where('payment_number', $pay_number);
-            $this->db->update($this->table,$data);
-
-            $transaction = array(
-                'ref' =>$tid,
-                'loan_id' => $loan_number,
-                'amount' => $final_paid,
-                'payment_number' => $pay_number,
-                'transaction_type' => 3,
-                'payment_proof' => 'null',
-                'added_by' => $this->session->userdata('user_id'),
-                'date_stamp'=> $date
-
-            );
-            $this->insert_transaction_compat($transaction);
-            return true;
-
-        }
-        elseif(intval($amount) > intval($to_pay)) {
-
-            $our_amount = $amount;
-//get all loans
-            $this->db->select("*")
-                ->from($this->table)
-
-                ->where('loan_id', $loan_number)
-                ->where('status', 'NOT PAID');
-//                ->or_where('partial_paid', 'NO');
-            $this->db->order_by('payment_number', 'ASC');
-
-            $result = $this->db->get()->result();
-
-            foreach ($result as $lr){
-
-
-
-
-                if($our_amount < ($lr->amount-$lr->paid_amount) ){
-                    $data = array(
-                        'partial_paid'=>'YES',
-                        'paid_amount'=>$our_amount,
-                        'paid_date'=> $date
-                    );
-                    $this->db->where('loan_id', $loan_number);
-                    $this->db->where('payment_number',  $lr->payment_number);
-                    $this->db->update($this->table,$data);
-
-                    $transaction = array(
-                        'ref' => $tid,
-                        'loan_id' => $loan_number,
-                        'amount' => $our_amount ,
-                        'payment_number' =>  $lr->payment_number,
-                        'transaction_type' => 3,
-                        'payment_proof' => 'null',
-                        'added_by' => $this->session->userdata('user_id'),
-                        'date_stamp'=> $date
-
-                    );
-                    $this->insert_transaction_compat($transaction);
-                    return true;
-                }
-                elseif($our_amount==($lr->amount-$lr->paid_amount)){
-                    $data = array(
-                        'partial_paid'=>'NO',
-                        'status'=>'PAID',
-                        'paid_amount'=>$our_amount,
-                        'paid_date'=> $date
-                    );
-                    $this->db->where('loan_id', $loan_number);
-                    $this->db->where('payment_number', $lr->payment_number);
-                    $this->db->update($this->table,$data);
-                    $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$lr->payment_number+1));
-                    $this->_should_close_loan($loan_number, $lr->payment_number);
-                    $transaction = array(
-                        'ref' => $tid,
-                        'loan_id' => $loan_number,
-                        'amount' => $our_amount,
-                        'payment_number' => $lr->payment_number,
-                        'transaction_type' => 3,
-                        'payment_proof' => 'null',
-                        'added_by' => $this->session->userdata('user_id'),
-                        'date_stamp'=> $date
-
-                    );
-                    $this->insert_transaction_compat($transaction);
-                    return true;
-                }
-                else{
-                    $our_amount = $our_amount - ($lr->amount-$lr->paid_amount);
-                    $data = array(
-                        'partial_paid'=>'NO',
-                        'status'=>'PAID',
-                        'paid_amount'=>$lr->amount,
-                        'paid_date'=> $date
-                    );
-                    $this->db->where('loan_id', $loan_number);
-                    $this->db->where('payment_number', $lr->payment_number);
-                    $this->db->update($this->table,$data);
-                    $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$lr->payment_number+1));
-                    $this->_should_close_loan($loan_number, $lr->payment_number);
-                    $transaction = array(
-                        'ref' => $tid,
-                        'loan_id' => $loan_number,
-                        'amount' => $lr->amount,
-                        'payment_number' => $lr->payment_number,
-                        'transaction_type' => 3,
-                        'payment_proof' => 'null',
-                        'added_by' => $this->session->userdata('user_id'),
-                        'date_stamp'=> $date
-
-                    );
-                    $this->insert_transaction_compat($transaction);
-                }
-
-            }
-            return true;
-
-        }
-
-        elseif(intval($to_pay) === intval($amount)){
-
-            $new_to_pay = $amount;
-            $final_paid = $new_to_pay + $get_real_amount->paid_amount ;
-
-            $data = array(
-                'partial_paid'=>'NO',
-                'status'=>'PAID',
-                'paid_amount'=>$final_paid,
-                'paid_date'=> $date
-            );
-            $this->db->where('loan_id', $loan_number);
-            $this->db->where('payment_number', $pay_number);
-            $this->db->update($this->table,$data);
-            $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$pay_number+1));
-            $this->_should_close_loan($loan_number, $pay_number);
-            $transaction = array(
-                'ref' => $tid,
-                'loan_id' => $loan_number,
-                'amount' => $final_paid,
-                'payment_number' => $pay_number,
-                'transaction_type' => 3,
-                'payment_proof' => 'null',
-                'added_by' => $this->session->userdata('user_id'),
-                'date_stamp'=> $date
-
-            );
-            $this->insert_transaction_compat($transaction);
-            return true;
-
-        }
-        else{
-
-        }
+    public function pay_off($loan_number,$pay_number,$amount,$date,$tid) {
+        return $this->process_standard_payment($loan_number,$pay_number,$amount,$date,$tid);
     }
 	function get_total($id)
 	{
@@ -845,6 +315,22 @@ class Payement_schedules_model extends CI_Model
 	 * @param float|null $loan_amount_total Stored contract total on the loan row
 	 * @return object
 	 */
+    /** Display contract balances without changing stored principal balances. */
+    public static function with_contract_balances($payments)
+    {
+        $total=0;$paid=0;$result=array();
+        $payments=array_values((array)$payments);
+        usort($payments,function($a,$b){return (int)($a->payment_number??0)<=>(int)($b->payment_number??0);});
+        foreach((array)$payments as $row) $total+=(int)round((float)$row->amount*100);
+        foreach((array)$payments as $row) {
+            $copy=clone $row;
+            $paid+=(int)round((float)$row->paid_amount*100);
+            $copy->contract_balance=max(0,$total-$paid)/100;
+            $result[]=$copy;
+        }
+        return $result;
+    }
+
 	public function summarize_loan_balances($payments, $loan_amount_total = null)
 	{
 		$total_scheduled = 0.0;
@@ -915,7 +401,7 @@ class Payement_schedules_model extends CI_Model
                 + (float) ($schedule->total_late_charge ?? 0)
                 - (float) ($schedule->paid_amount ?? 0)
             );
-            if ($remaining > 0.005 && strtoupper(trim((string) ($schedule->status ?? ''))) !== 'PAID') {
+            if ($remaining > 0.005) {
                 $current_index = $index;
                 break;
             }
@@ -955,10 +441,12 @@ class Payement_schedules_model extends CI_Model
             // Payments are allocated proportionally on partially-paid schedules
             // elsewhere in this model, so use the same rule for principal owing.
             $principal = max(0.0, (float) ($schedule->principal ?? 0));
-            $principal_paid = $scheduled_amount > 0
-                ? min($principal, $principal * min(1, $paid_amount / $scheduled_amount))
-                : 0.0;
+            $component_state = isset($schedule->loan_id) ? $this->db->where('loan_id',(int)$schedule->loan_id)
+                ->where('payment_number',$payment_number)->get('loan_charge_state')->row() : null;
+            $principal_paid = $component_state ? (float)$component_state->paid_principal : ($scheduled_amount > 0
+                ? min($principal, $principal * min(1, $paid_amount / $scheduled_amount)) : 0.0);
             $principal_amount += max(0.0, $principal - $principal_paid);
+            $full_amount += max(0, (float)($schedule->total_late_charge ?? 0));
         }
 
         $full_amount = round($full_amount, 2);
@@ -978,80 +466,31 @@ class Payement_schedules_model extends CI_Model
     /** Apply a previously calculated payoff to its schedules. */
     public function apply_payoff($loan_id, $payoff, $date, $transaction_ref)
     {
-        $schedules = $this->db->where('loan_id', (int) $loan_id)
-            ->order_by('payment_number', 'ASC')->get($this->table)->result();
-        if (empty($schedules) || !$payoff) {
-            return false;
-        }
-
         $this->db->trans_begin();
-        foreach ($schedules as $schedule) {
-            $number = (int) $schedule->payment_number;
-            if ($number < (int) $payoff->current_payment) {
-                continue;
+        try {
+            $charges=$this->charge_model();
+            $current=$charges->refresh_loan($loan_id,$date);
+            $rows=$this->db->where('loan_id',(int)$loan_id)->order_by('payment_number')->get($this->table)->result();
+            $fresh=$this->calculate_payoff($rows);
+            if (!$fresh || abs($fresh->payoff_amount-$payoff->payoff_amount)>.01) throw new RuntimeException('Payoff quote changed; refresh the quote.');
+            foreach($rows as $row) {
+                if ($row->payment_number <= $fresh->full_through_payment) continue;
+                $state=$current['states'][$row->payment_number];
+                // Waive only unpaid future fees/interest; retain paid components
+                // and the original principal so the principal ledger stays valid.
+                $update=array('ploan_cover'=>$state['paid_cover'],'padmin_fee'=>$state['paid_admin'],
+                    'interest'=>$state['paid_interest']);
+                $update['amount']=round($row->principal+array_sum($update),2);
+                $this->db->where('id',$row->id)->update($this->table,$update);
             }
-
-            $scheduled = max(0.0, (float) ($schedule->amount ?? 0));
-            $paid = max(0.0, (float) ($schedule->paid_amount ?? 0));
-            $late_charge = max(0.0, (float) ($schedule->total_late_charge ?? 0));
-
-            if ($number <= (int) $payoff->full_through_payment) {
-                $allocation = max(0.0, $scheduled + $late_charge - $paid);
-                $new_amount = $scheduled;
-            } else {
-                $principal = max(0.0, (float) ($schedule->principal ?? 0));
-                $principal_paid = $scheduled > 0
-                    ? min($principal, $principal * min(1, $paid / $scheduled))
-                    : 0.0;
-                $allocation = max(0.0, $principal - $principal_paid);
-                $new_amount = $allocation;
-            }
-
-            $update = array(
-                'amount' => round($new_amount, 2),
-                'paid_amount' => round($new_amount, 2),
-                'total_late_charge' => 0,
-                'loan_balance' => 0,
-                'partial_paid' => 'NO',
-                'status' => 'PAID',
-                'paid_date' => $date,
-            );
-            if ($number > (int) $payoff->full_through_payment) {
-                $update['principal'] = round($new_amount, 2);
-                $update['interest'] = 0;
-                $update['padmin_fee'] = 0;
-                $update['ploan_cover'] = 0;
-            }
-            $this->db->where('id', $schedule->id)->update($this->table, $update);
-
-            if ($allocation > 0.005) {
-                $this->insert_transaction_compat(array(
-                    'ref' => $transaction_ref,
-                    'loan_id' => (int) $loan_id,
-                    'amount' => round($allocation, 2),
-                    'payment_number' => $number,
-                    'transaction_type' => 3,
-                    'payment_proof' => 'null',
-                    'added_by' => $this->session->userdata('user_id'),
-                    'date_stamp' => $date,
-                ));
-            }
-        }
-
-        $this->db->where('loan_id', (int) $loan_id)->update('loan', array(
-            'next_payment_id' => $payoff->schedule_count + 1,
-            'paid_off' => 'YES',
-            'loan_status' => 'CLOSED',
-        ));
-
-        if ($this->db->trans_status() === false) {
-            $this->db->trans_rollback();
-            return false;
-        }
-        $this->db->trans_commit();
-        return true;
-    }
-	function edits()
+            $result=$this->allocate_framework_payment($loan_id,$fresh->payoff_amount,$date,$transaction_ref);
+            if (empty($result['success'])) throw new RuntimeException($result['error']??'Payoff allocation failed.');
+            $total=$this->db->select_sum('amount')->where('loan_id',(int)$loan_id)->get($this->table)->row();
+            $this->db->where('loan_id',(int)$loan_id)->update('loan',array('paid_off'=>'YES','loan_status'=>'CLOSED','loan_amount_total'=>$total->amount));
+            if (!$this->db->trans_status()) throw new RuntimeException('Payoff update failed.');
+            $this->db->trans_commit(); return true;
+        } catch(Throwable $e) { $this->db->trans_rollback(); log_message('error',$e->getMessage()); return false; }
+    }	function edits()
 	{
 		$this->db->select('*');
 
@@ -1067,6 +506,7 @@ class Payement_schedules_model extends CI_Model
 	}
 	  function get_all_by_idPayNumber($id,$paymentnumber)
 	{
+        $this->charge_model()->refresh_loan($id);
         $this->normalize_schedule_payment_allocation($id);
 		$this->db->select('*');
 		$this->db->order_by($this->id, $this->order);
@@ -1086,6 +526,7 @@ class Payement_schedules_model extends CI_Model
      
    function get_next($pay_number,$id)
     {
+        $this->charge_model()->refresh_loan($id);
 		$this->normalize_schedule_payment_allocation($id);
 
         $this->db->where('loan_id',$id);
@@ -1099,452 +540,29 @@ class Payement_schedules_model extends CI_Model
         $this->db->where($this->id, $id);
         return $this->db->get($this->table)->row();
     }
-    function out_pay($loan_number, $pay_number, $amount, $date)
-    {
-$tid = "ST." . date('Y') . date('m') . date('d') . '.' . rand(100, 999);
-        $this->process_standard_payment($loan_number, $pay_number, $amount, $date, $tid);
-        return $tid;
 
-        // Get all loans
-        $this->db->select("*")
-            ->from($this->table)
-            ->where('loan_id', $loan_number)
-
-            ->where('status', 'NOT PAID');
-
-        $result = $this->db->get()->result();
-        $balance = $amount;
-        foreach ($result as $lr) {
-
-            $amount_to_pay = ($lr->amount - $lr->paid_amount);
-
-            // If the balance is already 0, break out of the loop
-            if ($balance <= 0 ) {
-                break;
-            }
-
-            if ($amount_to_pay == $balance) {
-                $data = array(
-                    'partial_paid' => 'NO',
-                    'status' => 'PAID',
-                    'paid_amount' => $balance,
-                    'paid_date' => $date
-                );
-                $balance = 0;
-            } elseif ($amount_to_pay > $balance) {
-                $data = array(
-                    'partial_paid' => 'YES',
-                    'paid_amount' => $balance + $lr->paid_amount,
-                    'paid_date' => $date
-                );
-                $balance = 0;
-            } else {
-                $data = array(
-                    'partial_paid' => 'NO',
-                    'status' => 'PAID',
-                    'paid_amount' => $lr->amount,
-                    'paid_date' => $date
-                );
-                $balance -= $lr->amount;
-            }
-
-            $this->db->where('loan_id', $loan_number);
-            $this->db->where('payment_number', $lr->payment_number);
-            $this->db->update($this->table, $data);
-            $this->db->where('loan_id', $loan_number)->update('loan', array('next_payment_id' => $pay_number));
-            $this->_should_close_loan($loan_number, $lr->payment_number);
-
-            $transaction = array(
-                'ref' => $tid,
-                'loan_id' => $loan_number,
-                'amount' => 0,
-                'payment_number' => $pay_number,
-                'transaction_type' => 3,
-                'payment_proof' => 'null',
-                'added_by' => $this->session->userdata('user_id'),
-                'date_stamp' => $date
-
-            );
-            $this->insert_transaction_compat($transaction);
-            $pay_number++;
-        }
-        return $tid;
+    public function out_pay($loan_number,$pay_number,$amount,$date) {
+        $tid='PAY-'.uniqid('',true);
+        return $this->process_standard_payment($loan_number,$pay_number,$amount,$date,$tid) ? $tid : false;
     }
 
-
-    public function new_pay($loan_number,$pay_number,$amount, $date){
-        $tid = "GF.".date('Y').date('m').date('d').'.'.rand(100,999);
-        return $this->process_standard_payment($loan_number, $pay_number, $amount, $date, $tid);
-
-        $this->db->select("*")->from($this->table);
-        $this->db->where('loan_id', $loan_number);
-        $this->db->where('payment_number', $pay_number);
-        $get_real_amount = $this->db->get()->row();
-        $to_pay = $get_real_amount->amount - $get_real_amount->paid_amount ;
-
-
-        if(intval($to_pay) > intval($amount) ){
-
-
-            $final_paid = $amount + $get_real_amount->paid_amount ;
-            $data = array(
-                'partial_paid'=>'YES',
-
-                'paid_amount'=>$final_paid,
-                'paid_date'=> $date
-            );
-            $this->db->where('loan_id', $loan_number);
-            $this->db->where('payment_number', $pay_number);
-            $this->db->update($this->table,$data);
-
-            $transaction = array(
-                'ref' => "GF.".date('Y').date('m').date('d').'.'.rand(100,999),
-                'loan_id' => $loan_number,
-                'amount' => $final_paid,
-                'payment_number' => $pay_number,
-                'transaction_type' => 3,
-                'payment_proof' => 'null',
-                'added_by' => $this->session->userdata('user_id'),
-                'date_stamp'=> $date
-
-            );
-            $this->insert_transaction_compat($transaction);
-            return true;
-
-        }
-        elseif(intval($amount) > intval($to_pay)) {
-
-            $our_amount = $amount;
-//get all loans
-            $this->db->select("*")
-                ->from($this->table)
-
-                ->where('loan_id', $loan_number)
-                ->where('status', 'NOT PAID');
-//                ->or_where('partial_paid', 'NO');
-            $this->db->order_by('payment_number', 'ASC');
-
-            $result = $this->db->get()->result();
-
-            foreach ($result as $lr){
-
-
-
-
-                if($our_amount < ($lr->amount-$lr->paid_amount) ){
-                    $data = array(
-                        'partial_paid'=>'YES',
-                        'paid_amount'=>$our_amount,
-                        'paid_date'=> $date
-                    );
-                    $this->db->where('loan_id', $loan_number);
-                    $this->db->where('payment_number',  $lr->payment_number);
-                    $this->db->update($this->table,$data);
-
-                    $transaction = array(
-                        'ref' => "GF.".date('Y').date('m').date('d').'.'.rand(100,999),
-                        'loan_id' => $loan_number,
-                        'amount' => $our_amount ,
-                        'payment_number' =>  $lr->payment_number,
-                        'transaction_type' => 3,
-                        'payment_proof' => 'null',
-                        'added_by' => $this->session->userdata('user_id'),
-                        'date_stamp'=> $date
-
-                    );
-                    $this->insert_transaction_compat($transaction);
-                    return true;
-                }
-                elseif($our_amount==($lr->amount-$lr->paid_amount)){
-                    $data = array(
-                        'partial_paid'=>'NO',
-                        'status'=>'PAID',
-                        'paid_amount'=>$our_amount,
-                        'paid_date'=> $date
-                    );
-                    $this->db->where('loan_id', $loan_number);
-                    $this->db->where('payment_number', $lr->payment_number);
-                    $this->db->update($this->table,$data);
-                    $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$lr->payment_number+1));
-                    $this->_should_close_loan($loan_number, $lr->payment_number);
-                    $transaction = array(
-                        'ref' => "GF.".date('Y').date('m').date('d').'.'.rand(100,999),
-                        'loan_id' => $loan_number,
-                        'amount' => $our_amount,
-                        'payment_number' => $lr->payment_number,
-                        'transaction_type' => 3,
-                        'payment_proof' => 'null',
-                        'added_by' => $this->session->userdata('user_id'),
-                        'date_stamp'=> $date
-
-                    );
-                    $this->insert_transaction_compat($transaction);
-                    return true;
-                }
-                else{
-                    $our_amount = $our_amount - ($lr->amount-$lr->paid_amount);
-                    $data = array(
-                        'partial_paid'=>'NO',
-                        'status'=>'PAID',
-                        'paid_amount'=>$lr->amount,
-                        'paid_date'=> $date
-                    );
-                    $this->db->where('loan_id', $loan_number);
-                    $this->db->where('payment_number', $lr->payment_number);
-                    $this->db->update($this->table,$data);
-                    $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$lr->payment_number+1));
-                    $this->_should_close_loan($loan_number, $lr->payment_number);
-                    $transaction = array(
-                        'ref' => "GF.".date('Y').date('m').date('d').'.'.rand(100,999),
-                        'loan_id' => $loan_number,
-                        'amount' => $lr->amount,
-                        'payment_number' => $lr->payment_number,
-                        'transaction_type' => 3,
-                        'payment_proof' => 'null',
-                        'added_by' => $this->session->userdata('user_id'),
-                        'date_stamp'=> $date
-
-                    );
-                    $this->insert_transaction_compat($transaction);
-                }
-
-            }
-            return true;
-
-        }
-
-        elseif(intval($to_pay) === intval($amount)){
-
-            $new_to_pay = $amount;
-            $final_paid = $new_to_pay + $get_real_amount->paid_amount ;
-
-            $data = array(
-                'partial_paid'=>'NO',
-                'status'=>'PAID',
-                'paid_amount'=>$final_paid,
-                'paid_date'=> $date
-            );
-            $this->db->where('loan_id', $loan_number);
-            $this->db->where('payment_number', $pay_number);
-            $this->db->update($this->table,$data);
-            $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$pay_number+1));
-            $this->_should_close_loan($loan_number, $pay_number);
-            $transaction = array(
-                'ref' => "GF.".date('Y').date('m').date('d').'.'.rand(100,999),
-                'loan_id' => $loan_number,
-                'amount' => $final_paid,
-                'payment_number' => $pay_number,
-                'transaction_type' => 3,
-                'payment_proof' => 'null',
-                'added_by' => $this->session->userdata('user_id'),
-                'date_stamp'=> $date
-
-            );
-            $this->insert_transaction_compat($transaction);
-            return true;
-
-        }
-        else{
-
-        }
+    public function new_pay($loan_number,$pay_number,$amount,$date) {
+        return $this->process_standard_payment($loan_number,$pay_number,$amount,$date,'PAY-'.uniqid('',true));
     }
     
     
     //
-    
-    
-                     public function topnew_pay($loan_number,$pay_number,$amount,$realaccountbalance){
-                    
-                     
-                         
-                         $amountComing=$amount;
-                         
-                            $datapaymentschedule = get_by_id2($this->table,'loan_id ='.$loan_number.'  AND payment_number ='.$pay_number);
-                            //get loan products id
-                             $dataloanproductsid = get_by_id2('loan','loan_id ='.$loan_number);
-                                   //get loan products details
-                            
-                             $dataloanproducts = get_by_id2('loan_products','loan_product_id ='.$dataloanproductsid->loan_product);
-                              $this->db->select("*")->from($this->table);
-        $this->db->where('loan_id', $loan_number);
-        $this->db->where('payment_number', $pay_number);
-        $get_real_amount = $this->db->get()->row();
-        $to_pay = $get_real_amount->amount - $get_real_amount->paid_amount ;
-		                 
 
-                           
-                            if($datapaymentschedule ->loan_balance>$realaccountbalance){
-                             $newbalance=($datapaymentschedule ->loan_balance- $realaccountbalance);
-                            }
-                            else {
-                                 $newbalance=$realaccountbalance-$to_pay;
-                            }
-                           
-                             //interest
-   
-                         	$amount_interest = $amount *( ($dataloanproducts ->interest/100)*12);
-
-
-		
-
-
-		//total payments applying interest
-		$amount_total =$newbalance + $amount_interest * $dataloanproductsid ->loan_period * 1;
-
-		//payment per term
-		$amount_term = number_format(round($newbalance / ($dataloanproductsid ->loan_period * 1), 2) + $amount_interest, 2, '.', '');
-
-	
-		//$monthly_payment = $amount*($i/12)*pow((1+$i/12),$months)/(pow((1+$i/12),$months)-1);
-
-		$i = ($dataloanproducts->interest / 100) * 12;
-		$af = ($dataloanproducts->admin_fees / 100) * 12;
-		$lc = ($dataloanproducts->loan_cover / 100) * 12;
-		$total_deduction = $i + $af + $lc;
-
-       $months=  $dataloanproductsid->loan_period;
-		$monthly_payment = $amount * ($total_deduction / 12) * pow((1 + $total_deduction / 12), $months) / (pow((1 + $total_deduction / 12), $months) - 1);
-		$monthly_payment1 = $amount * ($total_deduction / 12) * pow((1 + $total_deduction / 12), $months) / (pow((1 + $total_deduction / 12), $months) - 1);
-		$current_balance = $amount;
-		$current_balance1 = $amount;
-		$payment_counter = 1;
-		$total_interest = 0;
-		$total_interest1 = 0;
-		$total_admin_fees = 0;
-		$total_admin_fees1 = 0;
-		$total_loan_cover = 0;
-		$total_loan_cover1 = 0;
-
-
-
-		$ii=1;
-
-
-
-
-
-		while($current_balance1 > 0) {
-			//create rows
-
-
-
-			$towards_interest1 = ($i / 12) * $current_balance1;  //this calculates the portion of your monthly payment that goes towards interest
-			$towards_fees = ($af / 12) * $current_balance1;  //this calculates the portion of your monthly payment that goes towards administration fees
-			$towards_lc = ($lc / 12) * $current_balance1;  //this calculates the portion of your monthly payment that goes towards administration fees
-
-			if ($monthly_payment1 > $current_balance1) {
-				$monthly_payment1 = $current_balance1 + $towards_interest1 + $towards_fees + $towards_lc;
-
-			}
-			$towards_balance1 = $monthly_payment1 - ($towards_interest1 + $towards_fees + $towards_lc);
-			$total_interest1 = $total_interest1 + $towards_interest1;
-			$total_admin_fees = $total_admin_fees + $towards_fees;
-			$total_loan_cover = $total_loan_cover + $towards_lc;
-			$current_balance1 = $current_balance1 - $towards_balance1;
-
-		}
-
-
-
-		
-		
-		
-		               
-        if(intval($to_pay) > intval($newbalance) ){
-
-
-            $final_paid = $amount + $get_real_amount->paid_amount ;
-            $data = array(
-                'partial_paid'=>'YES',
-                'amount' => $monthly_payment,
-                'principal' =>$realaccountbalance,
-                 'interest' => 	$amount_interest ,
-                  'loan_balance' => $newbalance,
-                 
-                'paid_amount'=>$final_paid
-            );
-            $this->db->where('loan_id', $loan_number);
-            $this->db->where('payment_number', $pay_number);
-            $this->db->update($this->table,$data);
-
-            $transaction = array(
-                'ref' => "GF.".date('Y').date('m').date('d').'.'.rand(100,999),
-                'loan_id' => $loan_number,
-                'amount' => $final_paid,
-                'payment_number' => $pay_number,
-                'transaction_type' => 3,
-                'payment_proof' => 'null',
-                'added_by' => $this->session->userdata('user_id')
-
-            );
-            $this->insert_transaction_compat($transaction);
-            return true;
-
-        }elseif(intval($to_pay) === intval($newbalance)){
-
-
-            $new_to_pay = $newbalance;
-            $final_paid = $new_to_pay + $get_real_amount->paid_amount ;
-
-            $data = array(
-                'partial_paid'=>'NO',
-                'status'=>'PAID',
-                'paid_amount'=>$final_paid
-            );
-            $this->db->where('loan_id', $loan_number);
-            $this->db->where('payment_number', $pay_number);
-            $this->db->update($this->table,$data);
-            $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$pay_number+1));
-                $this->_should_close_loan($loan_number, $pay_number);
-            $transaction = array(
-                'ref' => "GF.".date('Y').date('m').date('d').'.'.rand(100,999),
-                'loan_id' => $loan_number,
-                'amount' => $final_paid,
-                'payment_number' => $pay_number,
-                'transaction_type' => 3,
-                'payment_proof' => 'null',
-                'added_by' => $this->session->userdata('user_id')
-
-            );
-            $this->insert_transaction_compat($transaction);
-            return true;
-
-        }else{
-
-        }
+    public function topnew_pay($loan_number,$pay_number,$amount,$realaccountbalance) {
+        // Repayments no longer reprice schedules; use the approved restructure flow for term changes.
+        return $this->process_standard_payment($loan_number,$pay_number,$amount,date('Y-m-d H:i:s'),'PAY-'.uniqid('',true));
     }
     
     
     //
-    public function finish_pay($loan_number,$pay_number,$amount){
-        $this->db->select("*")->from($this->table);
-        $this->db->where('loan_id', $loan_number);
-        $this->db->where('payment_number', $pay_number);
 
-
-            $data = array(
-                'partial_paid'=>'NO',
-                'status'=>'PAID',
-                'paid_amount'=>$amount
-            );
-            $this->db->where('loan_id', $loan_number);
-            $this->db->where('payment_number', $pay_number);
-            $this->db->update($this->table,$data);
-            $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$pay_number+1));
-            $this->_should_close_loan($loan_number, $pay_number);
-            $transaction = array(
-                'ref' => "GF.".date('Y').date('m').date('d').'.'.rand(100,999),
-                'loan_id' => $loan_number,
-                'amount' => $amount,
-                'payment_number' => $pay_number,
-                'transaction_type' => 3,
-                'payment_proof' => 'null',
-                'added_by' => $this->session->userdata('user_id')
-
-            );
-            $this->insert_transaction_compat($transaction);
-            return true;
-            
+    public function finish_pay($loan_number,$pay_number,$amount) {
+        return $this->process_standard_payment($loan_number, 1, $amount, date('Y-m-d H:i:s'), 'PAY-'.uniqid('',true));
     }
     function count_payments($loan_number){
         $this->db->select("*")->from($this->table);
@@ -1654,15 +672,18 @@ $tid = "ST." . date('Y') . date('m') . date('d') . '.' . rand(100, 999);
 
         $schedules = $this->db->where('loan_id', $loan_id)->order_by('payment_number', 'ASC')->get($this->table)->result();
         $running_balance = (float) $loan->loan_principal;
+        $component_states = array();
+        if ($this->db->table_exists('loan_charge_state')) {
+            foreach ($this->db->where('loan_id',(int)$loan_id)->get('loan_charge_state')->result() as $state) $component_states[$state->payment_number]=$state;
+        }
 
         foreach ($schedules as $s) {
             $principal = (float) ($s->principal ?? 0);
             $amount = (float) ($s->amount ?? 0);
             $paid = max(0.0, (float) ($s->paid_amount ?? 0));
-            $status = strtoupper(trim((string) ($s->status ?? '')));
 
-            if ($status === 'PAID') {
-                $principal_paid = $principal;
+            if (isset($component_states[$s->payment_number])) {
+                $principal_paid = min($principal, max(0,(float)$component_states[$s->payment_number]->paid_principal));
             } elseif ($paid > 0 && $amount > 0) {
                 $principal_paid = min($principal, $principal * ($paid / $amount));
             } else {
@@ -1671,7 +692,10 @@ $tid = "ST." . date('Y') . date('m') . date('d') . '.' . rand(100, 999);
 
             $running_balance -= $principal_paid;
             $running_balance = max(0.0, $running_balance);
-            $this->db->where('id', $s->id)->update($this->table, array('loan_balance' => round($running_balance, 2)));
+            $balance = round($running_balance, 2);
+            if (abs((float)$s->loan_balance - $balance) > 0.0001) {
+                $this->db->where('id', $s->id)->update($this->table, array('loan_balance' => $balance));
+            }
         }
 
         $schedule_total = $this->db->select('SUM(amount) AS total_amount')
@@ -1699,7 +723,7 @@ $tid = "ST." . date('Y') . date('m') . date('d') . '.' . rand(100, 999);
             return false;
         }
 
-        $rows = $this->db->select('amount, paid_amount, status')
+        $rows = $this->db->select('amount, paid_amount, status, total_late_charge')
             ->from($this->table)
             ->where('loan_id', $loan_number)
             ->where('amount >', 0)
@@ -1719,7 +743,7 @@ $tid = "ST." . date('Y') . date('m') . date('d') . '.' . rand(100, 999);
             $total_due += $amount;
             $total_paid += $paid;
 
-            if ($paid + 0.0001 < $amount) {
+            if ($paid + 0.0001 < $amount || (float)$row->total_late_charge > 0.005) {
                 return false;
             }
 
@@ -1829,84 +853,9 @@ $tid = "ST." . date('Y') . date('m') . date('d') . '.' . rand(100, 999);
 
         return $this->close_loan_if_fully_paid($loan_number, $pay_number);
     }
-    function pay($loan_number,$pay_number,$amount)
-    {
-//get payment id
-        $this->db->select("*")->from($this->table);
-            $this->db->where('loan_id', $loan_number);
-        $this->db->where('payment_number', $pay_number);
-        $get_real_amount = $this->db->get()->row();
-            if($get_real_amount->partial_paid == 'Yes'){
-                $new_paid_bal = $get_real_amount->amount - $get_real_amount->paid_amount;
-                $data = array(
-                    'partial_paid'=>'Yes',
-                    'paid_amount'=>$amount
-                );
-                $this->db->where('loan_id', $loan_number);
-                $this->db->where('payment_number', $pay_number);
-                $this->db->update($this->table,$data);
-//            $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$pay_number+1));
-                $transaction = array(
-                    'ref' => "GF.".date('Y').date('m').date('d').'.'.rand(100,999),
-                    'loan_id' => $loan_number,
-                    'amount' => $amount,
-                    'payment_number' => $pay_number,
-                    'transaction_type' => 3,
-                    'payment_proof' => 'null',
-                    'added_by' => $this->session->userdata('user_id')
 
-                );
-                $this->insert_transaction_compat($transaction);
-
-            }else{
-
-            }
-        if($get_real_amount->amount == $amount){
-            $data = array(
-                'status'=>'PAID',
-                'paid_amount'=>$amount
-            );
-            $this->db->where('loan_id', $loan_number);
-            $this->db->where('payment_number', $pay_number);
-            $this->db->update($this->table,$data);
-            $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$pay_number+1));
-            $transaction = array(
-                'ref' => "GF.".date('Y').date('m').date('d').'.'.rand(100,999),
-                'loan_id' => $loan_number,
-                'amount' => $amount,
-                'payment_number' => $pay_number,
-                'transaction_type' => 3,
-                'payment_proof' => 'null',
-                'added_by' => $this->session->userdata('user_id')
-
-            );
-            $this->insert_transaction_compat($transaction);
-        }
-        else{
-            $data = array(
-                'partial_paid'=>'Yes',
-                'paid_amount'=>$amount
-            );
-            $this->db->where('loan_id', $loan_number);
-            $this->db->where('payment_number', $pay_number);
-            $this->db->update($this->table,$data);
-//            $this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$pay_number+1));
-            $transaction = array(
-                'ref' => "GF.".date('Y').date('m').date('d').'.'.rand(100,999),
-                'loan_id' => $loan_number,
-                'amount' => $amount,
-                'payment_number' => $pay_number,
-                'transaction_type' => 3,
-                'payment_proof' => 'null',
-                'added_by' => $this->session->userdata('user_id')
-
-            );
-            $this->insert_transaction_compat($transaction);
-        }
-
-
-
-		return true;
+    public function pay($loan_number,$pay_number,$amount) {
+        return $this->process_standard_payment($loan_number, 1, $amount, date('Y-m-d H:i:s'), 'PAY-'.uniqid('',true));
     }
     public function sum_interests($from,$to){
 	$this->db->select('SUM(interest) as interest');
@@ -1991,36 +940,9 @@ public function bad_debits($from,$to){
 
 		return FALSE;
 	}
-    function pay_advance($loan_number,$amount,$arr)
-    {
-		for($i=0;$i <count($arr);$i++){
 
-			$data = array(
-				'status'=>'PAID',
-				'paid_amount'=>$amount
-			);
-			$this->db->where('loan_id', $loan_number);
-			$this->db->where('payment_number', $arr[$i]);
-			$this->db->update($this->table,$data);
-			$this->db->where('loan_id',$loan_number)->update('loan',array('next_payment_id'=>$arr[$i]+1));
-
-			$transaction = array(
-				'ref' => "GF.".date('Y').date('m').date('d').'.'.rand(100,999),
-				'loan_id' => $loan_number,
-				'amount' => $amount,
-				
-				'payment_number' => $arr[$i],
-				'transaction_type' => 3,
-				'added_by' => $this->session->userdata('user_id')
-
-			);
-			$this->insert_transaction_compat($transaction);
-
-
-		}
-
-
-		return true;
+    public function pay_advance($loan_number,$amount,$arr) {
+        return $this->process_standard_payment($loan_number, 1, (float)$amount * count((array)$arr), date('Y-m-d H:i:s'), 'PAY-'.uniqid('',true));
     }
     
     // get total rows

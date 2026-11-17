@@ -12,7 +12,8 @@
 	<div class="card">
 		<div class="card-body" style="border: thick orange solid;border-radius: 14px;">
 			<a href="<?php echo base_url('Branches/create') ?>" class="btn btn-primary">Create Branch</a>
-        <table id="data-table" class="table table-bordered" style="margin-bottom: 10px">
+        <div class="table-responsive">
+        <table id="data-table" class="table table-bordered" style="margin-bottom: 10px;width:100%">
 			<thead>
             <tr>
                 <th>No</th>
@@ -31,12 +32,12 @@
                 ?>
                 <tr>
 			<td width="80px"><?php echo ++$start ?></td>
-			<td><?php echo $branches->BranchCode ?></td>
-			<td><?php echo $branches->BranchName ?></td>
-			<td><?php echo $branches->AddressLine1 ?></td>
-			<td><?php echo $branches->AddressLine2 ?></td>
-			<td><?php echo $branches->City ?></td>
-			<td><?php echo $branches->Stamp ?></td>
+			<td><?php echo htmlspecialchars((string)($branches->BranchCode??''),ENT_QUOTES,'UTF-8'); ?></td>
+			<td><?php echo htmlspecialchars((string)($branches->BranchName??''),ENT_QUOTES,'UTF-8'); ?></td>
+			<td><?php echo htmlspecialchars((string)($branches->AddressLine1??''),ENT_QUOTES,'UTF-8'); ?></td>
+			<td><?php echo htmlspecialchars((string)($branches->AddressLine2??''),ENT_QUOTES,'UTF-8'); ?></td>
+			<td><?php echo htmlspecialchars((string)($branches->City??''),ENT_QUOTES,'UTF-8'); ?></td>
+			<td><?php echo htmlspecialchars((string)($branches->Stamp??''),ENT_QUOTES,'UTF-8'); ?></td>
 			<td style="text-align:center" width="200px">
 				<?php 
 				echo anchor(site_url('branches/read/'.$branches->id),'Read'); 
@@ -50,6 +51,7 @@
             ?>
 			</tbody>
         </table>
+        </div>
 		</div>
 	</div>
 </div>

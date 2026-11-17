@@ -1,6 +1,6 @@
 <?php
 $transaction_types = get_all('transaction_type');
-$employees = get_all('employees');
+$employees = get_report_loan_officers();
 $products = get_all('loan_products');
 $branches= get_all('branches');
 ?>

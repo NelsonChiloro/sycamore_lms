@@ -1,3 +1,4 @@
+<?php $payments = Payement_schedules_model::with_contract_balances($payments); ?>
 <?php
 $settings = get_by_id('settings', 'settings_id', '1');
 ?>
@@ -48,7 +49,7 @@ $settings = get_by_id('settings', 'settings_id', '1');
 				<th>Loan cover(<?php echo $settings->currency ?>)</th>
 				<th>Amount(<?php echo $settings->currency ?>)</th>
 				<th>Amount Paid(<?php echo $settings->currency ?>)</th>
-				<th>Loan Balance(<?php echo $settings->currency ?>)</th>
+				<th>Remaining Balance(<?php echo $settings->currency ?>)</th>
 				<th>Status</th>
 			</tr>
 			</thead>
@@ -76,7 +77,7 @@ $settings = get_by_id('settings', 'settings_id', '1');
 					<td <?php echo $css; ?>><?php echo number_format($p->ploan_cover, 2) ?></td>
 					<td <?php echo $css; ?>><?php echo number_format($p->amount, 2) ?></td>
 					<td <?php echo $css; ?>><?php echo number_format($p->paid_amount, 2) ?></td>
-					<td <?php echo $css; ?>><?php echo number_format($p->loan_balance, 2) ?></td>
+					<td <?php echo $css; ?>><?php echo number_format($p->contract_balance, 2) ?></td>
 					<td><?php echo $p->status . $xstatus; ?></td>
 				</tr>
 			<?php endforeach; ?>

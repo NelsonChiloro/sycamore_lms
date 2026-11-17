@@ -1,5 +1,6 @@
 
-<div class="main-content">
+<?php $this->load->view('individual_customers/_list_layout'); ?>
+<div class="main-content customer-list-page">
     <div class="page-header">
         <h2 class="header-title">Individual customers</h2>
         <div class="header-sub-title">
@@ -72,7 +73,7 @@
                     <input type="date" name="from" <?php  echo $this->input->get('from'); ?>> Registered to: <input type="date" name="to" value="<?php  echo $this->input->get('to'); ?>"> <input type="submit" value="filter" name="search"><input type="submit" value="export excel" name="search"><input type="submit" name="search" value="export pdf">
                 </form>
             </div>
-            <table id="data-table" class="table">
+            <div class="customer-table-scroll"><table id="data-table" class="table">
                 <thead>
                 <tr>
 
@@ -108,6 +109,7 @@
                         <td><?php echo $individual_customers->CreatedOn ?></td>
                         <td style="text-align:center" width="200px">
                             <a href="<?php echo base_url('individual_customers/view/'.$individual_customers->cid)?>" class="btn btn-info"><i class="os-icon os-icon-eye"></i>View </a>
+                            <?php $this->load->view('individual_customers/_delete_button',array('customer_delete_id'=>$individual_customers->cid)); ?>
 
                         </td>
                     </tr>
@@ -115,7 +117,7 @@
                 }
                 ?>
                 </tbody>
-            </table>
+            </table></div>
         </div>
     </div>
 </div>

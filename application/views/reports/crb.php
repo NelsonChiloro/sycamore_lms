@@ -13,14 +13,53 @@
         <div class="card-body" style="border: thick #153505 solid;border-radius: 14px;">
             <div class="text-center mb-4">
                 <h4>Generate CRB Report</h4>
-                <p class="text-muted">Click the button below to generate and download the CRB report in Excel format.</p>
+                <p class="text-muted">Choose filters, then generate your CRB report.</p>
             </div>
 
-            <div class="text-center">
-                <a href="<?php echo base_url('Reports/export_crb')?>" id="generateCrbReport" class="btn btn-lg btn-success bg-gradient" style="padding: 15px 30px;">
+            <form method="get" action="<?php echo site_url('Reports/export_crb'); ?>" id="crbReportForm">
+                <div class="row">
+                    <div class="col-md-4 form-group">
+                        <label for="crbStatus">Loan status</label>
+                        <select name="loan_status" id="crbStatus" class="form-control">
+                            <option value="ALL">All disbursed loans</option>
+                            <option value="ACTIVE">Active</option>
+                            <option value="PAID_UP">Completely paid up</option>
+                            <option value="WRITTEN_OFF">Written off</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4 form-group">
+                        <label for="crbProduct">Loan product</label>
+                        <select name="product" id="crbProduct" class="form-control">
+                            <option value="">All products</option>
+                            <?php foreach($products as $product): ?>
+                            <option value="<?php echo (int)$product->loan_product_id; ?>"><?php echo htmlspecialchars($product->product_name,ENT_QUOTES,'UTF-8'); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="col-md-4 form-group">
+                        <label for="crbBranch">Branch</label>
+                        <select name="branch" id="crbBranch" class="form-control">
+                            <option value="">All branches</option>
+                            <?php foreach($branches as $branch): ?>
+                            <option value="<?php echo (int)$branch->id; ?>"><?php echo htmlspecialchars($branch->BranchName,ENT_QUOTES,'UTF-8'); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="col-md-6 form-group">
+                        <label for="crbFrom">Loan date from</label>
+                        <input type="date" name="date_from" id="crbFrom" class="form-control">
+                    </div>
+                    <div class="col-md-6 form-group">
+                        <label for="crbTo">Loan date to</label>
+                        <input type="date" name="date_to" id="crbTo" class="form-control">
+                    </div>
+                </div>
+                <p class="text-muted">Completely paid up includes loans with all installments and late charges settled.</p>
+                <div class="text-center">
+                <button type="submit" id="generateCrbReport" class="btn btn-lg btn-success bg-gradient" style="padding: 15px 30px;">
                     <i class="anticon anticon-file-excel m-r-10"></i>
                     Generate CRB Report
-                </a>
+                </button>
                 <div id="loadingIndicator" class="mt-3" style="display: none;">
                     <div class="spinner-border text-primary" role="status">
                         <span class="sr-only">Generating report...</span>
@@ -28,18 +67,26 @@
                     <p class="mt-2">Please wait while we generate your report...</p>
                 </div>
             </div>
+            </form>
         </div>
 
     </div>
 </div>
 
 <script>
-document.getElementById('generateCrbReport').addEventListener('click', function(e) {
-    const button = this;
+document.getElementById('crbReportForm').addEventListener('submit', function(e) {
+    const from = document.getElementById('crbFrom').value;
+    const to = document.getElementById('crbTo').value;
+    if (from && to && from > to) {
+        e.preventDefault();
+        alert('Loan date from must not exceed loan date to.');
+        return;
+    }
+    const button = document.getElementById('generateCrbReport');
     const loadingIndicator = document.getElementById('loadingIndicator');
 
     // Show loading state
-    button.style.pointerEvents = 'none';
+    button.disabled = true;
     button.innerHTML = '<i class="anticon anticon-loading m-r-10"></i>Generating...';
     loadingIndicator.style.display = 'block';
 
@@ -47,4 +94,3 @@ document.getElementById('generateCrbReport').addEventListener('click', function(
     // The loading state will be reset when the page reloads or user returns
 });
 </script>
-</div>

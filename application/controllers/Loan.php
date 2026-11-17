@@ -299,7 +299,7 @@ class Loan extends CI_Controller
         $data['filter_default_status'] = isset($options['default_status']) ? $options['default_status'] : 'All';
         $data['filter_lock_officer'] = !empty($options['officer_id']);
         $data['filter_officer_id'] = !empty($options['officer_id']) ? $options['officer_id'] : null;
-        $data['relationship_supervisors'] = $this->Employees_model->get_relationship_supervisors();
+        $data['relationship_supervisors'] = $this->Employees_model->get_report_supervisors();
         $data['relationship_officers'] = $this->Employees_model->get_relationship_officers(false);
 
         if (!empty($options['plain_header'])) {
@@ -1002,20 +1002,9 @@ class Loan extends CI_Controller
 
     }
     function get_late_charg($id){
-        $re = array();
-        $charge_value = 0;
-
-        $loan =	$this->Loan_model->get_by_id($id);
-        $loanproduct =	$this->Loan_products_model->get_by_id($loan->loan_product);
-
-        $charge_value =  ($loanproduct->penalty/100) *  ($loan->loan_amount_term);
-
-
-        echo $charge_value;
-
-
+        $this->load->model('Late_charges_model');
+        echo number_format($this->Late_charges_model->get_total_loan_late_charges((int)$id),2,'.','');
     }
-
     public function add(){
         $data['customers'] =$this->Individual_customers_model->get_all_active();
         $data['funds_sources'] = $this->Funds_source_model->get_all_funds_sources();
@@ -1869,10 +1858,12 @@ class Loan extends CI_Controller
                     return;
                 }
 
+                $this->load->model('Late_charges_model');
+                $this->Late_charges_model->refresh_loan($loan->loan_id, $proof);
                 $this->db->select('payment_number, total_late_charge');
                 $this->db->from('payement_schedules');
                 $this->db->where('loan_id', $loan->loan_id);
-                $this->db->where_in('status', array('NOT PAID', 'PARTIAL PAID'));
+                $this->db->group_start()->where('status !=', 'PAID')->or_where('total_late_charge >', 0)->group_end();
                 $this->db->order_by('payment_number', 'ASC');
                 $this->db->limit(1);
                 $next_payment = $this->db->get()->row();
@@ -1882,10 +1873,10 @@ class Loan extends CI_Controller
                     return;
                 }
 
-                $this->db->select('SUM(amount - paid_amount) as outstanding');
+                $this->db->select('SUM(amount - paid_amount + total_late_charge) as outstanding');
                 $this->db->from('payement_schedules');
                 $this->db->where('loan_id', $loan->loan_id);
-                $this->db->where_in('status', array('NOT PAID', 'PARTIAL PAID'));
+                $this->db->group_start()->where('status !=', 'PAID')->or_where('total_late_charge >', 0)->group_end();
                 $outstanding_row = $this->db->get()->row();
 
                 $outstanding = round((float)($outstanding_row ? $outstanding_row->outstanding : 0), 2);
@@ -2934,14 +2925,58 @@ class Loan extends CI_Controller
 
     function create_act_edit(){
         $row = get_by_id('approval_edits','approval_edits_id',$this->session->userdata('loan_data'));
+        if (!$row || $row->type !== 'Loan edit' || $row->state !== 'Approved') {
+            $this->toaster->error('An approved loan edit is required.');
+            redirect('loan/edit_approve');return;
+        }
         $data_new = json_decode($row->new_info);
+        if (!$data_new || !empty($data_new->repair_completed_at)) {
+            $this->toaster->error('This repair has already been applied or its request is invalid.');
+            redirect('loan/edit_approve');return;
+        }
 
         $selected_period_type = isset($data_new->period_type) ? $data_new->period_type : null;
-        $this->Loan_model->add_loan_edit($row->id,$data_new->loan_principal, $data_new->loan_period, $data_new->sy_loan_product, $data_new->loan_date,$data_new->sy_loan_customer,$data_new->customer_type,$data_new->loan_worthness_file,$data_new->narration,$data_new->sy_added_by, $selected_period_type);
-        if (isset($data_new->branch) && get_by_id('branches', 'id', $data_new->branch)) {
-            $this->Loan_model->update($row->id, array('branch' => $data_new->branch));
+        $this->db->trans_begin();
+        try {
+            $locked=$this->db->query('SELECT * FROM approval_edits WHERE approval_edits_id=? FOR UPDATE',array($row->approval_edits_id))->row();
+            $data_new=$locked ? json_decode($locked->new_info) : null;
+            if (!$locked || $locked->state !== 'Approved' || !$data_new || !empty($data_new->repair_completed_at)) {
+                throw new RuntimeException('This request is no longer awaiting execution or has already been applied.');
+            }
+            $this->load->model('Late_charges_model');
+            // Repair the original schedules automatically before changing terms.
+            // Only recorded account dates are recovered; reference dates are not
+            // silently treated as verified effective payment dates.
+            $data_new->repair_result=$this->Late_charges_model->prepare_restructure(
+                $row->id,true,false,$row->approval_edits_id);
+            $this->Loan_model->add_loan_edit($row->id,$data_new->loan_principal, $data_new->loan_period, $data_new->sy_loan_product, $data_new->loan_date,$data_new->sy_loan_customer,$data_new->customer_type,$data_new->loan_worthness_file,$data_new->narration,$data_new->sy_added_by, $selected_period_type);
+            if (isset($data_new->branch) && get_by_id('branches', 'id', $data_new->branch)) {
+                $this->Loan_model->update($row->id, array('branch' => $data_new->branch));
+            }
+            // Run after every schedule generator, including flat/group products.
+            $repair = $this->Payement_schedules_model->repair_loan_payment_state($row->id);
+            if (isset($repair['error']) || $this->db->trans_status() === false) {
+                throw new Exception(isset($repair['error']) ? $repair['error'] : 'Database update failed.');
+            }
+            $data_new->repair_completed_at=date('Y-m-d H:i:s');
+            $this->db->where('approval_edits_id',$row->approval_edits_id)->update('approval_edits',array('new_info'=>json_encode($data_new)));
+            if (!$this->db->trans_status()) throw new RuntimeException('Could not save the restructure audit.');
+            $this->db->trans_commit();
+        } catch (Throwable $e) {
+            $this->db->trans_rollback();
+            if ($data_new && empty($data_new->repair_completed_at)) {
+                $this->db->where('approval_edits_id',$row->approval_edits_id)->where('state','Approved')->update('approval_edits',array('state'=>'recommended'));
+            }
+            log_message('error', 'Loan restructure failed for loan ' . $row->id . ': ' . $e->getMessage());
+            $this->toaster->error('Loan restructure failed: ' . $e->getMessage());
+            redirect('loan/edit_approve');
+            return;
         }
-        $this->toaster->success('Success, loan edit was authorised  pending authorisation');
+        $this->session->unset_userdata('loan_data');
+        $this->toaster->success('Loan restructured and repayment schedules reconciled successfully.');
+        if ($repair['unapplied'] > 0.01) {
+            $this->toaster->warning('Repayments exceed the rebuilt schedule by MWK' . number_format($repair['unapplied'], 2) . '. Review the excess credit in the transaction history.');
+        }
         redirect('loan/edit_approve');
 
 
@@ -3323,62 +3358,28 @@ class Loan extends CI_Controller
         )));
     }
     public function pay_advance(){
-        $loan_number = $this->input->post('loan_id');
-        $pay_number = $this->input->post('payment_number');
-        $amount = $this->input->post('amount');
-        $amount_total = 0;
-        for($i=0;$i <count($pay_number);$i++){
-            $amount_total += $amount;
+        $loan_id=(int)$this->input->post('loan_id');
+        $numbers=(array)$this->input->post('payment_number');
+        $amount=(float)str_replace(',', '', (string)$this->input->post('amount')) * count($numbers);
+        $loan=get_by_id('loan','loan_id',$loan_id);
+        $collection=get_by_id('account','collection_account','Yes');
+        $account=$loan ? $this->Account_model->get_account($loan->loan_number) : null;
+        if (!$loan || !$collection || !$account || $amount<=0 || $account->balance<$amount) {
+            $this->toaster->error('Invalid advance repayment or insufficient funds.');
+            redirect('loan/repayment_view/'.$loan_id); return;
         }
-        $loan_account = get_by_id('loan','loan_id',$loan_number);
-        $recepientt = get_by_id('account','collection_account','Yes');
-        $check = $this->Account_model->get_account($loan_account->loan_number);
-        if($check->balance >= $amount_total) {
-
-            $result = $this->Payement_schedules_model->pay_advance($loan_number, $amount, $pay_number);
-            if ($result) {
-
-
-
-                //get loan products id
-                $dataloanproductsid = get_by_id2('loan','loan_id ='.$loan_number);
-                $remainingschedule = ( $dataloanproductsid ->loan_period-$pay_number);
-                $counter=1;
-                $pay_number=$pay_number+1;
-
-                $realaccountbalance= $check->balance;
-                while($counter <= $remainingschedule)
-                {
-
-
-                    $topup = $this->Payement_schedules_model->topnew_pay($loan_number,$pay_number,$amount,$realaccountbalance);
-                    $pay_number=$pay_number+1;
-                    $counter=$counter+1;
-                }
-                // Get loan and customer details for enhanced logging
-                $customer_data = $this->get_customer_name_for_loan($loan_number);
-                $payment_numbers_str = implode(', ', $pay_number);
-
-                $logger = array(
-                    'user_id' => $this->session->userdata('user_id'),
-                    'activity' => 'Advance Loan Payment: ' .
-                                  ' | Amount: MWK ' . number_format($amount_total, 2) .
-                                  ' | Client: ' . $customer_data['customer_name'] .
-                                  ' | Loan #: ' . (!empty($customer_data['loan_details']) ? $customer_data['loan_details']->loan_number : $loan_number) .
-                                  ' | Payment #s: ' . $payment_numbers_str
-                );
-                log_activity($logger);
-
-                $this->toaster->success('Success, advance payment was successful');
-                redirect($_SERVER['HTTP_REFERER']);
-            } else {
-                $this->toaster->error('Ops!, Sorry advance payment failed P7');
-                redirect($_SERVER['HTTP_REFERER']);
-            }
-        }else{
-            $this->toaster->error('Ops!, Sorry advance payment failed, You dont have enough funds to perform this transactions');
-            redirect($_SERVER['HTTP_REFERER']);
+        $tid='ADV-'.uniqid('',true); $date=date('Y-m-d H:i:s');
+        $this->db->trans_begin();
+        $result=$this->Payement_schedules_model->pay_loan_with_late_charges($loan_id,1,$amount,$date,$tid);
+        $transfer=!empty($result['success']) ? $this->Account_model->transfer_funds($loan->loan_number,$collection->account_number,$amount,$tid) : null;
+        if (empty($result['success']) || $transfer!=='success' || !$this->db->trans_status()) {
+            $this->db->trans_rollback();
+            $this->toaster->error($result['error']??'Advance repayment failed.');
+        } else {
+            $this->db->trans_commit();
+            $this->toaster->success('Advance repayment allocated successfully.');
         }
+        redirect('loan/repayment_view/'.$loan_id);
     }
     public function finish_loan(){
         $loan_number = $this->input->post('loan_id');
@@ -3621,22 +3622,9 @@ class Loan extends CI_Controller
         }
         $tid = "TR-S" . rand(100, 9999) . date('Y') . date('m') . date('d');
         $mode = 'deposit';
-        if(!empty($get_account)){
-            // Check if there are late charges for this payment schedule
-            $this->db->select('total_late_charge');
-            $this->db->from('payement_schedules');
-            $this->db->where('loan_id', $loan_number);
-            $this->db->where('payment_number', $pay_number);
-            $schedule = $this->db->get()->row();
-
-            $has_late_charges = ($schedule && ($schedule->total_late_charge ?? 0) > 0);
-
-            // Use appropriate payment method based on late charges
-            if ($has_late_charges) {
-                $r = $this->Payement_schedules_model->pay_loan_with_late_charges($loan_number, $pay_number, $amount, $proof, $tid);
-            } else {
-                $r = $this->Payement_schedules_model->new_pay_new($loan_number, $pay_number, $amount, $proof, $tid);
-            }
+        if(!empty($get_account) && $loan_n && $collection_acccount){
+            $this->db->trans_begin();
+            $r = $this->Payement_schedules_model->pay_loan_with_late_charges($loan_number, $pay_number, $amount, $proof, $tid);
 
             // Handle different return types
             $payment_successful = false;
@@ -3648,17 +3636,17 @@ class Loan extends CI_Controller
                 if (isset($r['allocation_log'])) {
                     $allocation_info = " | Payment Allocation: " . implode(', ', $r['allocation_log']);
                 }
-            } elseif (!empty($r)) {
+            } elseif (!is_array($r) && !empty($r)) {
                 // Traditional payment method
                 $payment_successful = true;
             }
 
             if($payment_successful){
                 $teller_account = $get_account->account;
-                $this->Account_model->cash_transaction_modified($teller_account,$loan_n->loan_number,$amount,$mode,$tid,$proof,'deposit');
+                $cash_result = $this->Account_model->cash_transaction_modified($teller_account,$loan_n->loan_number,$amount,$mode,$tid,$proof,'deposit');
 
 
-                $this->Account_model->transfer_funds1($loan_n->loan_number, $collection_acccount->account_number,$amount, $tid,$proof);
+                $transfer_result = $this->Account_model->transfer_funds1($loan_n->loan_number, $collection_acccount->account_number,$amount, $tid,$proof);
 
                 // Record the transaction with payment reference for duplicate-prevention tracking
                 $trans_data = array(
@@ -3672,6 +3660,13 @@ class Loan extends CI_Controller
                     'added_by'         => $this->session->userdata('user_id'),
                 );
                 $this->Transactions_model->insert($trans_data);
+
+                if ($cash_result !== 'success' || $transfer_result !== 'success' || !$this->db->trans_status()) {
+                    $this->db->trans_rollback();
+                    $this->toaster->error('Payment posting failed; no allocation was saved.');
+                    redirect($_SERVER['HTTP_REFERER']); return;
+                }
+                $this->db->trans_commit();
 
                 // Get loan and customer details for enhanced logging
                 $customer_data = $this->get_customer_name_for_loan($loan_number);
@@ -3691,6 +3686,12 @@ class Loan extends CI_Controller
 
                 $this->toaster->success('Success, payment was successful');
                 redirect($_SERVER['HTTP_REFERER']);
+            }
+            else {
+                $this->db->trans_rollback();
+                $this->toaster->error(is_array($r) && isset($r['error']) ? $r['error'] : 'Payment could not be allocated. Check its date and outstanding balance.');
+                redirect($_SERVER['HTTP_REFERER']);
+                return;
             }
         }
         else{
@@ -5157,7 +5158,20 @@ class Loan extends CI_Controller
 
             $disbursement_datetime = $this->resolve_disbursement_datetime();
             $transaction_date = date('Y-m-d', strtotime($disbursement_datetime));
-            $this->cash_transaction($id, $transaction_date);
+            try {
+                $existing=$this->db->where('loan_id',(int)$id)->get('loan')->row();
+                if ($existing && $existing->disbursed==='Yes') {
+                    $this->toaster->error('This loan is already disbursed.');
+                    $this->redirect_after_approval_action($action);
+                    return;
+                }
+                $this->cash_transaction($id, $transaction_date);
+            } catch (Throwable $e) {
+                log_message('error','Disbursement fee failed for loan '.$id.': '.$e->getMessage());
+                $this->toaster->error('Disbursement stopped: '.$e->getMessage());
+                $this->redirect_after_approval_action($action);
+                return;
+            }
             $this->pay_off_loan($id, $disbursement_datetime);
             $this->Payement_schedules_model->correct_premature_loan_closure($id);
         }else{
@@ -5312,47 +5326,59 @@ class Loan extends CI_Controller
         $this->Payement_schedules_model->correct_premature_loan_closure($loan_id);
     }
     public function cash_transaction($loan_id, $transaction_date = null){
-        $tid="TR-S".rand(100,9999).date('Y').date('m').date('d');
-        $result = array();
-        $get_account = $this->Tellering_model->get_teller_account1();
-        $teller_account = $get_account->account;
-        $get_l = get_by_id('loan','loan_id',$loan_id);
-        $charge = get_by_id('loan_products','loan_product_id', $get_l->loan_product);
-        $charge_value =  ($charge->processing_fees/100)*$get_l->loan_principal;
-
-        $account = $get_l->loan_number;
-        $amount = $charge_value;
-        $mode = 'deposit';
-        $txn_date = $transaction_date ? date('Y-m-d', strtotime($transaction_date)) : date('Y-m-d');
-        $res =	$this->Account_model->cash_transaction($teller_account,$account,$amount,$mode,$tid,$txn_date);
-        if($res=='success'){
-            $result['status']= 'success';
-
-            $tid="TR-S".rand(100,9999).date('Y').date('m').date('d');
-
-
-            $this->Account_model->transfer_funds($account, $teller_account, $amount, $tid);
-
-            $data = array(
-                'ref' => "GF." . date('Y') . date('m') . date('d') . '.' . rand(100, 999),
-                'loan_id' => $loan_id,
-                'amount' => $amount,
-                'transaction_type' => 1,
-                'payment_number' => 0,
-                'added_by' => $this->session->userdata('user_id')
-
-            );
-
-            $this->Transactions_model->insert($data);
-
-
-
-
-
+        // Preserve Account_model's numeric return contract for other callers.
+        $debug=$this->db->db_debug;
+        $this->db->db_debug=false;
+        try {
+            if (!$this->db->trans_begin()) throw new RuntimeException('Could not start the fee transaction.');
+            $query=$this->db->query('SELECT * FROM loan WHERE loan_id=? FOR UPDATE',array((int)$loan_id));
+            $loan=$query ? $query->row() : null;
+            if (!$loan) throw new RuntimeException('Loan not found.');
+            $fee_ref='GF.LOAN.'.(int)$loan_id;
+            $posted=$this->db->where('loan_id',(int)$loan_id)->where('ref',$fee_ref)
+                ->where('transaction_type',1)->where('payment_number',0)->get('transactions')->row();
+            if ($posted) {
+                if (!$this->db->trans_status()) throw new RuntimeException('Fee retry check failed.');
+                $this->db->trans_commit();
+                return true;
+            }
+            // Historical partial postings need a separate accounting correction.
+            if ($loan->disbursed==='Yes' || $this->db->where('loan_id',(int)$loan_id)
+                ->where('transaction_type',1)->where('payment_number',0)->count_all_results('transactions')) {
+                throw new RuntimeException('Existing disbursement requires accounting review before retry.');
+            }
+            if ($loan->loan_status!=='APPROVED') throw new RuntimeException('Only approved loans can be disbursed.');
+            $product=$this->db->where('loan_product_id',$loan->loan_product)->get('loan_products')->row();
+            if (!$product) throw new RuntimeException('Loan product not found.');
+            $amount=round((float)$product->processing_fees*(float)$loan->loan_principal/100,2);
+            if (!is_finite($amount) || $amount<0) throw new RuntimeException('Invalid processing fee.');
+            $teller=$this->Tellering_model->get_teller_account1();
+            if (!$teller || $teller->account===$loan->loan_number) throw new RuntimeException('Internal teller is not configured.');
+            $accounts=$this->db->query('SELECT account_number FROM account WHERE account_number IN (?,?) ORDER BY account_number FOR UPDATE',
+                array($teller->account,$loan->loan_number))->result();
+            if (count($accounts)!==2) throw new RuntimeException('Disbursement accounts are missing or duplicated.');
+            if ($this->db->where('account_number',$loan->loan_number)->count_all_results('transaction')) {
+                throw new RuntimeException('Existing loan ledger movements require review before disbursement.');
+            }
+            $date=$transaction_date ? date('Y-m-d',strtotime($transaction_date)) : date('Y-m-d');
+            if ($amount>0) {
+                $result=$this->Account_model->cash_transaction($teller->account,$loan->loan_number,$amount,'deposit','PF.IN.'.(int)$loan_id,$date);
+                if (!is_numeric($result) || (int)$result<=0 || !$this->db->trans_status()) throw new RuntimeException('Processing fee deposit failed.');
+                $result=$this->Account_model->transfer_funds1($loan->loan_number,$teller->account,$amount,'PF.OUT.'.(int)$loan_id,$date);
+                if ($result!=='success' || !$this->db->trans_status()) throw new RuntimeException('Processing fee transfer failed.');
+            }
+            $this->Transactions_model->insert(array('ref'=>$fee_ref,'loan_id'=>(int)$loan_id,'amount'=>$amount,
+                'transaction_type'=>1,'payment_number'=>0,'date_stamp'=>$date.' 00:00:00',
+                'description'=>'Disbursement processing fee','added_by'=>$this->session->userdata('user_id')));
+            if (!$this->db->trans_status()) throw new RuntimeException('Processing fee record failed.');
+            if (!$this->db->trans_commit()) throw new RuntimeException('Processing fee commit failed.');
+            return true;
+        } catch (Throwable $e) {
+            $this->db->trans_rollback();
+            throw $e;
+        } finally {
+            $this->db->db_debug=$debug;
         }
-
-
-
     }
     function write_action(){
         $action = $this->input->get('action');

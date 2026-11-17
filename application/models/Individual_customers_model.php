@@ -18,6 +18,7 @@ class Individual_customers_model extends CI_Model
     // get all
     function get_all()
     {
+        $this->exclude_deleted();
         $this->db->order_by('individual_customers.id', $this->order);
 //        $this->db->select('*,employees.Firstname as efname, employees.Lastname as elname')->from($this->table);
 //
@@ -26,6 +27,7 @@ class Individual_customers_model extends CI_Model
     }
     function get_all2()
     {
+        $this->exclude_deleted();
 		$this->db->order_by('individual_customers.id', 'ASC');
 		$this->db->select('*,geo_countries.name as geoname,employees.Firstname as efname, employees.Lastname as elname,individual_customers.Firstname as cfname, individual_customers.Lastname as clname,individual_customers.Middlename as cmname, individual_customers.Gender as cgender,individual_customers.DateOfBirth as cdob, individual_customers.EmailAddress as cemail,individual_customers.id as cid')->from($this->table);
 
@@ -35,6 +37,7 @@ class Individual_customers_model extends CI_Model
     }
     function get_filter($status,$user,$country,$branch,$gender, $from, $to)
     {
+        $this->exclude_deleted();
 
 		$this->db->order_by('individual_customers.id', $this->order);
 		$this->db->select('*,geo_countries.name as geoname,employees.Firstname as efname, employees.Lastname as elname,individual_customers.Firstname as cfname, individual_customers.Lastname as clname,individual_customers.Middlename as cmname, individual_customers.Gender as cgender,individual_customers.id as cid,individual_customers.DateOfBirth as cdob, individual_customers.EmailAddress as cemail')->from($this->table);
@@ -71,11 +74,13 @@ class Individual_customers_model extends CI_Model
     }
     function get_selective($id)
     {
+        $this->exclude_deleted();
         $this->db->order_by($this->id, $this->order);
         $this->db->where('added_by',$id);
         return $this->db->get($this->table)->result();
     }   function get_status($id)
     {
+        $this->exclude_deleted();
         $this->db->order_by($this->id, $this->order);
         $this->db->where('approval_status',$id);
         return $this->db->get($this->table)->result();
@@ -121,7 +126,7 @@ class Individual_customers_model extends CI_Model
         return $this->db->count_all_results();
     }
     function count_it() {
-
+        $this->exclude_deleted();
 	$this->db->from($this->table);
         return $this->db->count_all_results();
     }
@@ -199,10 +204,25 @@ class Individual_customers_model extends CI_Model
     }
 
     // delete data
+    public function has_loan_record($id)
+    {
+        return $this->db->where('loan_customer',(int)$id)->where('customer_type','individual')
+            ->count_all_results('loan') > 0;
+    }
+
     function delete($id)
     {
         $this->db->where($this->id, $id);
-        $this->db->delete($this->table);
+        // Enforce the rule on the write as well as in the controller. Include
+        // closed, written-off and deleted loans: all are retained loan records.
+        $this->db->where("NOT EXISTS (SELECT 1 FROM loan customer_loan WHERE customer_loan.loan_customer = individual_customers.id AND customer_loan.customer_type = 'individual')",null,false);
+        return $this->db->update($this->table,array('approval_status'=>'Deleted'))
+            && $this->db->affected_rows() > 0;
+    }
+
+    private function exclude_deleted() {
+        $this->db->group_start()->where('individual_customers.approval_status !=','Deleted')
+            ->or_where('individual_customers.approval_status',null)->group_end();
     }
 
 }
